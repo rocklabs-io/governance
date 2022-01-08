@@ -1,2 +1,2 @@
-# Governance Framework for Projects on the IC
+## Governance Framework for Projects on the IC
 
