@@ -43,9 +43,12 @@ service : (
   balanceOf : (principal) -> (nat) query;
   burn : (nat) -> (Result);
   decimals : () -> (nat8) query;
+  delegate : (principal) -> (Result);
   getAllowanceSize : () -> (nat64) query;
+  getCurrentVotes : (principal) -> (nat) query;
   getHolders : (nat64, nat64) -> (vec record { principal; nat }) query;
   getMetadata : () -> (Metadata) query;
+  getPriorVotes : (principal, nat) -> (nat) query;
   getTokenInfo : () -> (TokenInfo) query;
   getUserApprovals : (principal) -> (vec record { principal; nat }) query;
   historySize : () -> (nat64) query;
