@@ -5,7 +5,7 @@
 * Maintainer : DFinance Team <hello@dfinance.ai>
 * Stability  : Experimental
 */
-use candid::{candid_method, CandidType, Deserialize, Int, Nat};
+use candid::{candid_method, CandidType, Deserialize, Int, Nat, export_service};
 use cap_sdk::{handshake, insert, Event, IndefiniteEvent, IndefiniteEventBuilder, DetailsBuilder, TypedEvent, CapEnv};
 use cap_std::dip20::cap::DIP20Details;
 use cap_std::dip20::{Operation, TransactionStatus, TxRecord};
@@ -637,13 +637,10 @@ fn get_user_approvals(who: Principal) -> Vec<(Principal, Nat)> {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
-fn main() {}
-
-#[cfg(not(any(target_arch = "wasm32", test)))]
-fn main() {
-    candid::export_service!();
-    std::print!("{}", __export_service());
+#[query(name = "__get_candid_interface_tmp_hack")]
+fn export_candid() -> String {
+    export_service!();
+    __export_service()
 }
 
 #[pre_upgrade]
