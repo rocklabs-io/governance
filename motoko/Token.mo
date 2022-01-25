@@ -26,7 +26,7 @@ shared(msg) actor class Token(
     _decimals: Nat8,
     _totalSupply: Nat,
     _owner: Principal,
-    // _fee: Nat   governance token doesn't need fee
+    _fee: Nat
     ) {
     type Operation = Types.Operation;
     type TransactionStatus = Types.TransactionStatus;
@@ -64,7 +64,7 @@ shared(msg) actor class Token(
     private stable var totalSupply_ : Nat = _totalSupply;
     private stable var blackhole : Principal = Principal.fromText("aaaaa-aa");
     private stable var feeTo : Principal = owner_;
-    private stable var fee : Nat = 0; // governance token doesn't need fee
+    private stable var fee : Nat = _fee;
     private stable var balanceEntries : [(Principal, Nat)] = [];
     private stable var allowanceEntries : [(Principal, [(Principal, Nat)])] = [];
     private var balances = HashMap.HashMap<Principal, Nat>(1, Principal.equal, Principal.hash);
@@ -136,7 +136,7 @@ shared(msg) actor class Token(
         let to_balance_new : Nat = to_balance + value;
         if (to_balance_new != 0) { balances.put(to, to_balance_new); };
 
-        _moveDelegates(?from, ?to, value);
+        _moveDelegates(?from, ?to, value, fee);
     };
 
     private func _balanceOf(who: Principal) : Nat {
@@ -489,17 +489,17 @@ shared(msg) actor class Token(
         let delegatorBalance = _balanceOf(delegator);
 
         delegates.put(delegator, delegatee);
-        _moveDelegates(currentDelegate, ?delegatee, delegatorBalance);
+        _moveDelegates(currentDelegate, ?delegatee, delegatorBalance, fee);
 
         delegatorBalance
     };    
 
-    private func _moveDelegates(from: ?Principal, to: ?Principal, amount: Nat) {
+    private func _moveDelegates(from: ?Principal, to: ?Principal, amount: Nat, fee: Nat) {
         if (amount > 0) {
             if (Option.isSome(from)) {
                 let from_ = Option.get(from, blackhole);
                 let fromDelegatesOld = _getVotes(from_);
-                let fromDelegatesNew = fromDelegatesOld - amount;
+                let fromDelegatesNew = fromDelegatesOld - amount - fee;
                 _writeCheckPoint(from_, fromDelegatesNew);
             };
             if (Option.isSome(to)) {

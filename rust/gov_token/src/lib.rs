@@ -174,7 +174,7 @@ fn _delegate(delegator: Principal, delegatee: Principal) -> Nat {
     let delegator_balance = balance_of(delegator);
 
     delegates.insert(delegator, delegatee);
-    _move_delegates(current_delegate, Some(&delegatee), delegator_balance.to_owned(), stats.fee.to_owned());
+    _move_delegates(current_delegate, Some(&delegatee), delegator_balance.clone(), stats.fee.clone());
 
     delegator_balance
 }
@@ -183,13 +183,13 @@ fn _move_delegates(from: Option<&Principal>, to: Option<&Principal>, amount: Nat
     if amount > 0u64 {
         if let Some(from_) = from {
             let from_delegates_old = _get_votes(from_);
-            let from_delegates_new = from_delegates_old - amount.to_owned();
+            let from_delegates_new = from_delegates_old - amount.clone() - fee;
             _write_check_point(from_, from_delegates_new);
         }
 
         if let Some(to_) = to {
             let to_delegates_old = _get_votes(to_);
-            let to_delegates_new = to_delegates_old + amount.to_owned() - fee;
+            let to_delegates_new = to_delegates_old + amount.clone();
             _write_check_point(to_, to_delegates_new);
         }
     }
@@ -199,7 +199,7 @@ fn _get_votes(who: &Principal) -> Nat {
     let check_points = ic::get::<CheckPoints>();
     match check_points.get(who) {
         Some(check_point) => {
-            check_point.last().unwrap().votes.to_owned()
+            check_point.last().unwrap().votes.clone()
         },
         None => Nat::from(0)
     }
@@ -234,18 +234,18 @@ fn get_prior_votes(who: Principal, timestamp: Nat) -> Nat {
     };
     let current_check_point = account_check_points.last().unwrap();
     if current_check_point.timestamp <= timestamp {
-        return current_check_point.votes.to_owned();
+        return current_check_point.votes.clone();
     }
     let oldest_check_point = account_check_points.first().unwrap();
     if oldest_check_point.timestamp > timestamp {
-        return oldest_check_point.votes.to_owned();
+        return oldest_check_point.votes.clone();
     }
     
     let idx = account_check_points
         .binary_search_by(|item| item.timestamp.cmp(&timestamp))
         .unwrap_or_else(|x| x - 1);
 
-    account_check_points[idx].votes.to_owned()
+    account_check_points[idx].votes.clone()
 }
 
 #[update(name = "delegate")]
