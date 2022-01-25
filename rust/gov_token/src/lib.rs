@@ -170,50 +170,50 @@ fn _charge_fee(user: Principal, fee_to: Principal, fee: Nat) {
 fn _delegate(delegator: Principal, delegatee: Principal) -> Nat {
     let delegates = ic::get_mut::<Delegates>();
     let stats = ic::get::<StatsData>();
-    let currentDelegate = ic::get::<Delegates>().get(&delegator);
-    let delegatorBalance = balance_of(delegator);
+    let current_delegate = ic::get::<Delegates>().get(&delegator);
+    let delegator_balance = balance_of(delegator);
 
     delegates.insert(delegator, delegatee);
-    _moveDelegates(currentDelegate, Some(&delegatee), delegatorBalance.to_owned(), stats.fee.to_owned());
+    _move_delegates(current_delegate, Some(&delegatee), delegator_balance.to_owned(), stats.fee.to_owned());
 
-    delegatorBalance
+    delegator_balance
 }
 
-fn _moveDelegates(from: Option<&Principal>, to: Option<&Principal>, amount: Nat, fee: Nat) {
+fn _move_delegates(from: Option<&Principal>, to: Option<&Principal>, amount: Nat, fee: Nat) {
     if amount > 0u64 {
         if let Some(from_) = from {
-            let fromDelegatesOld = _getVotes(from_);
-            let fromDelegatesNew = fromDelegatesOld - amount.to_owned();
-            _writeCheckPoint(from_, fromDelegatesNew);
+            let from_delegates_old = _get_votes(from_);
+            let from_delegates_new = from_delegates_old - amount.to_owned();
+            _write_check_point(from_, from_delegates_new);
         }
 
         if let Some(to_) = to {
-            let toDelegatesOld = _getVotes(to_);
-            let toDelegatesNew = toDelegatesOld + amount.to_owned() - fee;
-            _writeCheckPoint(to_, toDelegatesNew);
+            let to_delegates_old = _get_votes(to_);
+            let to_delegates_new = to_delegates_old + amount.to_owned() - fee;
+            _write_check_point(to_, to_delegates_new);
         }
     }
 }
 
-fn _getVotes(who: &Principal) -> Nat {
-    let checkPoints = ic::get::<CheckPoints>();
-    match checkPoints.get(who) {
-        Some(checkPoint) => {
-            checkPoint.last().unwrap().votes.to_owned()
+fn _get_votes(who: &Principal) -> Nat {
+    let check_points = ic::get::<CheckPoints>();
+    match check_points.get(who) {
+        Some(check_point) => {
+            check_point.last().unwrap().votes.to_owned()
         },
         None => Nat::from(0)
     }
 }
 
-fn _writeCheckPoint(who: &Principal, newVotes: Nat) {
-    let checkPoints = ic::get_mut::<CheckPoints>();
+fn _write_check_point(who: &Principal, new_votes: Nat) {
+    let check_points = ic::get_mut::<CheckPoints>();
     
-    let checkPoint = checkPoints.entry(who.to_owned()).or_insert(vec![]);
+    let check_point = check_points.entry(who.to_owned()).or_insert(vec![]);
     let timestamp = Nat::from(ic::time());
-    if !checkPoint.is_empty() && checkPoint.last().unwrap().timestamp == timestamp {
-        checkPoint.last_mut().unwrap().votes = newVotes;
+    if !check_point.is_empty() && check_point.last().unwrap().timestamp == timestamp {
+        check_point.last_mut().unwrap().votes = new_votes;
     } else {
-        checkPoint.push(CheckPoint {timestamp, votes: newVotes});
+        check_point.push(CheckPoint {timestamp, votes: new_votes});
     }
 }
 
@@ -221,31 +221,31 @@ fn _writeCheckPoint(who: &Principal, newVotes: Nat) {
 #[query(name = "getCurrentVotes")]
 #[candid_method(query, rename = "getCurrentVotes")]
 fn get_current_votes(who: Principal) -> Nat {
-    _getVotes(&who)
+    _get_votes(&who)
 }
 
 #[query(name = "getPriorVotes")]
 #[candid_method(query, rename = "getPriorVotes")]
 fn get_prior_votes(who: Principal, timestamp: Nat) -> Nat {
-    let checkPoints = ic::get::<CheckPoints>();
-    let accountCheckPoints = match checkPoints.get(&who) {
+    let check_points = ic::get::<CheckPoints>();
+    let account_check_points = match check_points.get(&who) {
         Some(cp) => cp,
         None => { return Nat::from(0); }
     };
-    let currentCheckPoint = accountCheckPoints.last().unwrap();
-    if currentCheckPoint.timestamp <= timestamp {
-        return currentCheckPoint.votes.to_owned();
+    let current_check_point = account_check_points.last().unwrap();
+    if current_check_point.timestamp <= timestamp {
+        return current_check_point.votes.to_owned();
     }
-    let oldestCheckPoint = accountCheckPoints.first().unwrap();
-    if oldestCheckPoint.timestamp > timestamp {
-        return oldestCheckPoint.votes.to_owned();
+    let oldest_check_point = account_check_points.first().unwrap();
+    if oldest_check_point.timestamp > timestamp {
+        return oldest_check_point.votes.to_owned();
     }
     
-    let idx = accountCheckPoints
+    let idx = account_check_points
         .binary_search_by(|item| item.timestamp.cmp(&timestamp))
         .unwrap_or_else(|x| x - 1);
 
-    accountCheckPoints[idx].votes.to_owned()
+    account_check_points[idx].votes.to_owned()
 }
 
 #[update(name = "delegate")]
