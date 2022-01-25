@@ -4,13 +4,22 @@
       "main": "motoko/token.mo",
       "type": "motoko"
     },
+    "gov_token": { 
+		  "candid": "rust/gov_token/token.did",
+		  "wasm": "target/wasm32-unknown-unknown/release/gov_token.wasm",
+		  "type": "custom",
+      "build": [
+        "cargo build --target wasm32-unknown-unknown --package gov_token --release",
+        "ic-cdk-optimizer target/wasm32-unknown-unknown/release/gov_token.wasm -o target/wasm32-unknown-unknown/release/gov_token_opt.wasm"
+      ]
+    },
     "governance": { 
 		  "candid": "rust/governance/governance.did",
-		  "wasm": "target/wasm32-unknown-unknown/release/token.wasm",
+		  "wasm": "target/wasm32-unknown-unknown/release/governance.wasm",
 		  "type": "custom",
       "build": [
         "cargo build --target wasm32-unknown-unknown --package governance --release",
-        "ic-cdk-optimizer target/wasm32-unknown-unknown/release/dft_basic.wasm -o target/wasm32-unknown-unknown/release/dft_basic_opt.wasm"
+        "ic-cdk-optimizer target/wasm32-unknown-unknown/release/governance.wasm -o target/wasm32-unknown-unknown/release/governance_opt.wasm"
       ]
     }
   },
