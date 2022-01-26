@@ -1,14 +1,44 @@
+/**
+ * Module     : timelock.rs
+ * Copyright  : 2021 DFinance Team
+ * License    : Apache 2.0 with LLVM Exception
+ * Maintainer : DFinance Team <hello@dfinance.ai>
+ * Stability  : Experimental
+ */
+
 use std::collections::HashSet;
 use ic_kit::candid::{CandidType, Deserialize};
 use ic_kit::{ic, Principal};
 
 #[derive(Deserialize, CandidType, Hash, PartialEq, Eq, Clone)]
 pub struct Task {
+    /// principal of target canister
     target: Principal,
+    /// method name to call
     method: String,
+    /// encoded arguments
     arguments: Vec<u8>,
+    /// with cycles
     cycles: u64,
+    /// timestamp that the proposal will be available for execution, set once the vote succeed
     eta: u64,
+}
+
+impl Task {
+    pub(crate) fn new(
+        target: Principal,
+        method: String,
+        arguments: Vec<u8>,
+        cycles: u64,
+    ) -> Self {
+        Self {
+            target,
+            method,
+            arguments,
+            cycles,
+            eta: 0
+        }
+    }
 }
 
 #[derive(Deserialize, CandidType)]
@@ -17,7 +47,7 @@ pub struct Timelock {
     queued_transactions: HashSet<Task>
 }
 
-const ONE_DAY : u64 = 24 * 3600 * 1_000_000_000;
+pub const ONE_DAY : u64 = 24 * 3600 * 1_000_000_000;
 
 impl Timelock {
     /// grace period for execution
@@ -27,7 +57,7 @@ impl Timelock {
     /// maximum delay for time lock execution
     const MAX_DELAY : u64 = 30 * ONE_DAY;
 
-    fn new(delay: u64) -> Timelock {
+    fn new(delay: u64) -> Self {
         Timelock {
             delay,
             queued_transactions: HashSet::new()
@@ -35,8 +65,6 @@ impl Timelock {
     }
 
     fn set_delay(&mut self, delay: u64) {
-        assert!(delay >= Timelock::MIN_DELAY, "Delay must exceed minimum delay");
-        assert!(delay <= Timelock::MIN_DELAY, "Delay must not exceed maximum delay");
         self.delay = delay;
     }
 
@@ -48,10 +76,16 @@ impl Timelock {
         self.queued_transactions.remove(&task);
     }
 
-    async fn execute_transaction(&mut self, task: &Task) -> Result<Vec<u8>, &'static str> {
-        assert!(self.queued_transactions.contains(task), "Transaction hasn't been queued");
-        assert!(ic::time() >= task.eta, "Transaction hasn't surpassed time lock");
-        assert!(ic::time() <= task.eta + Timelock::GRACE_PERIOD, "Transaction is stale");
+    async fn execute_transaction(&mut self, task: &Task, timestamp: u64) -> Result<Vec<u8>, &'static str> {
+        if self.queued_transactions.contains(task) {
+            return Err("Transaction hasn't been queued");
+        }
+        if timestamp >= task.eta {
+            return Err("Transaction hasn't surpassed time lock")
+        };
+        if timestamp <= task.eta + Timelock::GRACE_PERIOD {
+            return Err("Transaction is stale");
+        }
 
         self.queued_transactions.remove(task);
 

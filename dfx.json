@@ -20,6 +20,9 @@
       "build": [
         "cargo build --target wasm32-unknown-unknown --package governance --release",
         "ic-cdk-optimizer target/wasm32-unknown-unknown/release/governance.wasm -o target/wasm32-unknown-unknown/release/governance_opt.wasm"
+      ],
+      "dependencies": [
+        "gov_token"
       ]
     }
   },

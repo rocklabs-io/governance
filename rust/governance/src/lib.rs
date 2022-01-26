@@ -10,6 +10,7 @@ use ic_kit::candid::{export_service};
 use ic_kit::macros::*;
 
 mod timelock;
+mod governance;
 
 // needed to export candid on save
 #[query(name = "__get_candid_interface_tmp_hack")]
