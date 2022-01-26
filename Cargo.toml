@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "rust/gov_token",
+    "rust/governance"
 ]
 
 [profile.release]
