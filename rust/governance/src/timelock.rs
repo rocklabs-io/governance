@@ -21,7 +21,7 @@ pub struct Task {
     /// with cycles
     cycles: u64,
     /// timestamp that the proposal will be available for execution, set once the vote succeed
-    eta: u64,
+    pub(crate) eta: u64,
 }
 
 impl Task {
@@ -43,7 +43,7 @@ impl Task {
 
 #[derive(Deserialize, CandidType)]
 pub struct Timelock {
-    delay: u64,
+    pub(crate) delay: u64,
     queued_transactions: HashSet<Task>
 }
 
@@ -51,11 +51,11 @@ pub const ONE_DAY : u64 = 24 * 3600 * 1_000_000_000;
 
 impl Timelock {
     /// grace period for execution
-    const GRACE_PERIOD : u64 = 14 * ONE_DAY;
+    pub(crate) const GRACE_PERIOD : u64 = 14 * ONE_DAY;
     /// minimum delay for time lock execution
-    const MIN_DELAY : u64 = 2 * ONE_DAY;
+    pub(crate) const MIN_DELAY : u64 = 2 * ONE_DAY;
     /// maximum delay for time lock execution
-    const MAX_DELAY : u64 = 30 * ONE_DAY;
+    pub(crate) const MAX_DELAY : u64 = 30 * ONE_DAY;
 
     fn new(delay: u64) -> Self {
         Timelock {
@@ -68,15 +68,15 @@ impl Timelock {
         self.delay = delay;
     }
 
-    fn queue_transaction(&mut self, task: Task) {
+    pub(crate) fn queue_transaction(&mut self, task: Task) {
         self.queued_transactions.insert(task);
     }
 
-    fn cancel_transaction(&mut self, task: &Task) {
+    pub(crate) fn cancel_transaction(&mut self, task: &Task) {
         self.queued_transactions.remove(&task);
     }
 
-    async fn execute_transaction(&mut self, task: &Task, timestamp: u64) -> Result<Vec<u8>, &'static str> {
+    pub(crate) async fn execute_transaction(&mut self, task: &Task, timestamp: u64) -> Result<Vec<u8>, &'static str> {
         if self.queued_transactions.contains(task) {
             return Err("Transaction hasn't been queued");
         }
