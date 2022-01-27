@@ -9,9 +9,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use ic_cdk::api::call::CallResult;
-use ic_kit::candid::{CandidType, Deserialize, Nat};
+use ic_kit::candid::{CandidType, Deserialize};
 use ic_kit::{ic, Principal};
-use ic_kit::macros::*;
 use crate::timelock::{ONE_DAY, Task, Timelock};
 
 thread_local! {
@@ -75,6 +74,8 @@ struct Proposal {
     id: u64,
     /// Creator of the proposal
     proposer: Principal,
+    /// Title of this proposal
+    title: String, // may limit its length
     /// Description of this proposal
     description: String, // TODO store in stable memory
     /// proposal task to action
@@ -103,6 +104,7 @@ impl Proposal {
     fn new(
         id: u64,
         proposer: Principal,
+        title: String,
         description: String,
         target: Principal,
         method: String,
@@ -114,6 +116,7 @@ impl Proposal {
         Self {
             id,
             proposer,
+            title,
             description,
             task: Task::new(target, method, arguments, cycles),
             start_time,
@@ -189,6 +192,7 @@ impl GovernorBravo {
     async fn propose(
         &mut self,
         proposer: Principal,
+        title: String,
         description: String,
         target: Principal,
         method: String,
@@ -229,7 +233,7 @@ impl GovernorBravo {
 
         let id = self.proposals.len();
         let proposal = Proposal::new(
-            id as u64, proposer, description, target, method, arguments, cycles,
+            id as u64, proposer, title, description, target, method, arguments, cycles,
             timestamp + self.voting_delay,
             timestamp + self.voting_delay + self.voting_period
         );
