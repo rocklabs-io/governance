@@ -6,20 +6,15 @@
  * Stability  : Experimental
  */
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use ic_cdk::api::call::CallResult;
 use ic_kit::candid::{CandidType, Deserialize};
 use ic_kit::{ic, Principal};
 use crate::timelock::{ONE_DAY, Task, Timelock};
 
-thread_local! {
-    pub static BRAVO : RefCell<GovernorBravo> = RefCell::new(GovernorBravo::default());
-}
-
 type GovernResult<R> = Result<R, &'static str>;
 
-#[derive(PartialEq)]
+#[derive(CandidType, PartialEq)]
 pub enum ProposalState {
     Pending,
     Active,
@@ -32,17 +27,17 @@ pub enum ProposalState {
     Expired,
 }
 
-#[derive(PartialEq, Deserialize, CandidType, Clone)]
+#[derive(PartialEq, Deserialize, CandidType, Clone, Debug)]
 pub enum VoteType {
     Support,
     Against,
     Abstain
 }
 
-#[derive(Deserialize, CandidType)]
+#[derive(Deserialize, CandidType, Clone, Debug)]
 pub struct GovernorBravo {
-    admin: Principal,
-    pending_admin: Option<Principal>,
+    pub(crate) admin: Principal,
+    pub(crate) pending_admin: Option<Principal>,
 
     /// name for the governance
     name: String,
@@ -68,10 +63,31 @@ pub struct GovernorBravo {
     timelock: Timelock,
 }
 
-#[derive(Deserialize, CandidType)]
-struct Proposal {
+#[derive(CandidType)]
+pub struct GovernorBravoInfo {
+    admin: Principal,
+    pending_admin: Option<Principal>,
+    /// name for the governance
+    name: String,
+    /// number of votes in support of a proposal required
+    /// in order for a quorum to be reached and for a vote to succeed
+    quorum_votes: u64,
+    /// delay before voting on a proposal may take place, once proposed
+    voting_delay:  u64,
+    /// duration of voting on a proposal
+    voting_period: u64,
+    /// number of votes required in order for a voter to become a proposer
+    proposal_threshold: u64,
+    /// number of proposal record ever proposed
+    proposals_num: usize,
+
+    gov_token: Principal,
+}
+
+#[derive(Deserialize, CandidType, Clone, Debug)]
+pub struct Proposal {
     /// id of the proposal
-    id: u64,
+    id: usize,
     /// Creator of the proposal
     proposer: Principal,
     /// Title of this proposal
@@ -79,7 +95,7 @@ struct Proposal {
     /// Description of this proposal
     description: String, // TODO store in stable memory
     /// proposal task to action
-    task: Task,
+    pub(crate) task: Task,
     /// The time at which voting begins: holders must delegate their votes prior to this timestamp
     start_time: u64,
     /// The time at which voting ends: votes must be cast prior to this timestamp
@@ -97,12 +113,35 @@ struct Proposal {
     /// Flag marking whether the proposal has been executed
     executed: bool,
     /// Receipts of ballots for the entire set of voters
-    receipts: HashMap<Principal, Receipt>
+    pub(crate) receipts: HashMap<Principal, Receipt>
+}
+
+#[derive(CandidType)]
+pub struct ProposalDigest {
+    /// id of the proposal
+    id: usize,
+    /// Creator of the proposal
+    proposer: Principal,
+    /// Title of this proposal
+    title: String,
+    // may limit its length
+    /// The time at which voting begins: holders must delegate their votes prior to this timestamp
+    start_time: u64,
+    /// The time at which voting ends: votes must be cast prior to this timestamp
+    end_time: u64,
+    /// Current number of votes in favor of this proposal
+    support_votes: u64,
+    /// Current number of votes in opposition to this proposal
+    against_votes: u64,
+    /// Current number of votes for abstaining for this proposal
+    abstain_votes: u64,
+    /// Number of voter
+    receipt_num: usize,
 }
 
 impl Proposal {
     fn new(
-        id: u64,
+        id: usize,
         proposer: Principal,
         title: String,
         description: String,
@@ -130,10 +169,24 @@ impl Proposal {
             receipts: HashMap::new()
         }
     }
+
+    fn digest(&self) -> ProposalDigest {
+        ProposalDigest {
+            id: self.id,
+            proposer: self.proposer,
+            title: self.title.clone(),
+            start_time: self.start_time,
+            end_time: self.end_time,
+            support_votes: self.support_votes,
+            against_votes: self.against_votes,
+            abstain_votes: self.abstain_votes,
+            receipt_num: self.receipts.len()
+        }
+    }
 }
 
-#[derive(Deserialize, CandidType, Clone)]
-struct Receipt {
+#[derive(Deserialize, CandidType, Clone, Debug)]
+pub struct Receipt {
     /// Whether or not the voter supports the proposal or abstains
     vote_type: VoteType,
     /// votes number
@@ -167,7 +220,7 @@ impl GovernorBravo {
     pub(crate) const MAX_VOTING_DELAY: u64 = 7 * ONE_DAY;
 
     /// initialize a Governor Bravo
-    fn initialize(
+    pub fn initialize(
         &mut self,
         name: String,
         quorum_votes: u64,
@@ -189,7 +242,7 @@ impl GovernorBravo {
     }
 
     /// propose a proposal, return id of proposal created
-    async fn propose(
+    pub async fn propose(
         &mut self,
         proposer: Principal,
         title: String,
@@ -233,7 +286,7 @@ impl GovernorBravo {
 
         let id = self.proposals.len();
         let proposal = Proposal::new(
-            id as u64, proposer, title, description, target, method, arguments, cycles,
+            id, proposer, title, description, target, method, arguments, cycles,
             timestamp + self.voting_delay,
             timestamp + self.voting_delay + self.voting_period
         );
@@ -244,7 +297,7 @@ impl GovernorBravo {
     }
 
     /// queue an proposal into time lock, return expected time
-    fn queue(&mut self, id: usize, timestamp: u64) -> GovernResult<u64> {
+    pub(crate) fn queue(&mut self, id: usize, timestamp: u64) -> GovernResult<u64> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Succeeded {
             return Err("proposal can only be queued if it is succeeded");
@@ -259,7 +312,7 @@ impl GovernorBravo {
     }
 
     /// execute the task in proposal, return the result in bytes array
-    async fn execute(&mut self, id: usize, timestamp: u64) -> GovernResult<Vec<u8>> {
+    pub async fn execute(&mut self, id: usize, timestamp: u64) -> GovernResult<Vec<u8>> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Queued {
             return Err("proposal can only be executed if it is queued");
@@ -280,7 +333,7 @@ impl GovernorBravo {
     }
 
     /// cancels a proposal only if sender is the proposer, or proposer delegates dropped below proposal threshold
-    async fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal) -> GovernResult<()> {
+    pub async fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal) -> GovernResult<()> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Executing {
             return Err("cannot cancel executing proposal");
@@ -308,7 +361,7 @@ impl GovernorBravo {
         Ok(())
     }
 
-    async fn cast_vote(
+    pub async fn cast_vote(
         &mut self,
         id: usize,
         vote_type: VoteType,
@@ -348,14 +401,35 @@ impl GovernorBravo {
         Ok(receipt)
     }
 
-    fn get_proposal(&self, id: usize) -> GovernResult<&Proposal>  {
+    pub fn get_proposal(&self, id: usize) -> GovernResult<&Proposal>  {
         match self.proposals.get(id) {
             Some(p) => { Ok(p) }
             None => { Err("invalid proposal id") }
         }
     }
 
-    fn get_receipt(&self, id: usize, voter: Principal) -> GovernResult<&Receipt> {
+    /// get specific number of proposal, in reverse sequence
+    /// page: from which page, start from 0
+    /// num: number of item in a page
+    pub fn get_proposal_pages(&self, page: usize, num: usize, timestamp: u64) -> GovernResult<Vec<(ProposalDigest, ProposalState)>> {
+        let proposal_count = self.proposals.len();
+        if proposal_count == 0 {
+            return Ok(vec![]);
+        }
+        let mut proposals = self.proposals.clone();
+        proposals.reverse();
+        let start = page * num;
+        let end = if start + num > proposal_count {
+            proposal_count
+        } else {
+            start + num
+        };
+        Ok(proposals[start..end].iter().map(|x| {
+            (x.digest(), self.get_state(x.id, timestamp)?)
+        }).collect())
+    }
+
+    pub fn get_receipt(&self, id: usize, voter: Principal) -> GovernResult<&Receipt> {
         match self.proposals.get(id) {
             Some(p) => {
                 match p.receipts.get(&voter) {
@@ -367,7 +441,7 @@ impl GovernorBravo {
         }
     }
 
-    fn get_state(&self, id: usize, timestamp: u64) -> GovernResult<ProposalState> {
+    pub fn get_state(&self, id: usize, timestamp: u64) -> GovernResult<ProposalState> {
         if id < self.proposals.len() { return Err("invalid proposal id"); }
         let proposal = &self.proposals[id];
         return Ok(
@@ -393,26 +467,44 @@ impl GovernorBravo {
         );
     }
 
-    fn set_vote_delay(&mut self, delay: u64) {
+    pub fn set_quorum_votes(&mut self, quorum: u64) {
+        self.quorum_votes = quorum;
+    }
+
+    pub fn set_vote_delay(&mut self, delay: u64) {
         self.voting_delay = delay;
     }
 
-    fn set_vote_period(&mut self, period: u64) {
+    pub fn set_vote_period(&mut self, period: u64) {
         self.voting_period = period;
     }
 
-    fn set_proposal_threshold(&mut self, threshold: u64) {
+    pub fn set_proposal_threshold(&mut self, threshold: u64) {
         self.proposal_threshold = threshold;
     }
 
-    fn set_pending_admin(&mut self, pending_admin: Principal) {
+    pub fn set_pending_admin(&mut self, pending_admin: Principal) {
         self.pending_admin = Some(pending_admin);
     }
 
-    fn accept_admin(&mut self) {
+    pub fn accept_admin(&mut self) {
         assert!(self.pending_admin.is_some());
         self.admin = self.pending_admin.unwrap();
         self.pending_admin = None;
+    }
+
+    pub(crate) fn digest(&self) -> GovernorBravoInfo {
+        GovernorBravoInfo {
+            admin: self.admin,
+            pending_admin: self.pending_admin,
+            name: self.name.clone(),
+            quorum_votes: self.quorum_votes,
+            voting_delay: self.voting_delay,
+            voting_period: self.voting_period,
+            proposal_threshold: self.proposal_threshold,
+            proposals_num: self.proposals.len(),
+            gov_token: self.gov_token
+        }
     }
 }
 

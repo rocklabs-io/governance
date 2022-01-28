@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use ic_kit::candid::{CandidType, Deserialize};
 use ic_kit::{ic, Principal};
 
-#[derive(Deserialize, CandidType, Hash, PartialEq, Eq, Clone)]
+#[derive(Deserialize, CandidType, Hash, PartialEq, Eq, Clone, Debug)]
 pub struct Task {
     /// principal of target canister
     target: Principal,
@@ -41,7 +41,7 @@ impl Task {
     }
 }
 
-#[derive(Deserialize, CandidType)]
+#[derive(Deserialize, CandidType, Clone, Debug)]
 pub struct Timelock {
     pub(crate) delay: u64,
     queued_transactions: HashSet<Task>
