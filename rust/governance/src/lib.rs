@@ -8,12 +8,13 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use ic_cdk::api::call::CallResult;
 use ic_kit::candid::{export_service, candid_method};
 use ic_kit::{ic, Principal};
 use ic_kit::ic::{stable_restore, stable_store};
 use ic_kit::macros::*;
 use crate::governance::{GovernorBravo, GovernorBravoInfo, Proposal, ProposalDigest, ProposalState, Receipt, VoteType};
-use crate::timelock::Task;
+use crate::timelock::{Task, Timelock};
 
 mod timelock;
 mod governance;
@@ -43,6 +44,7 @@ fn initialize(
     voting_delay: u64,
     voting_period: u64,
     proposal_threshold: u64,
+    timelock_delay: u64,
     gov_token: Principal,
 ) {
     // assert!(voting_delay >= GovernorBravo::MIN_VOTING_DELAY && voting_delay <= GovernorBravo::MAX_VOTING_DELAY);
@@ -56,6 +58,7 @@ fn initialize(
             voting_delay,
             voting_period,
             proposal_threshold,
+            timelock_delay,
             gov_token,
         );
     })
@@ -141,10 +144,24 @@ async fn propose(
     arguments: Vec<u8>,
     cycles: u64,
 ) -> Response<usize> {
-    BRAVO.with(|bravo| async {
+    let gov_token = BRAVO.with(|bravo| {
+        let bravo = bravo.borrow();
+        bravo.gov_token
+    });
+    let result : CallResult<(u64, )> = ic::call(gov_token, "getCurrentVotes", (ic::caller(), )).await;
+    let proposer_votes : u64 = match result {
+        Ok(res) => {
+            res.0
+        }
+        Err(_) => {
+            return Err("Error in getting proposer's vote")
+        }
+    };
+    BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         let id = bravo.propose(
             ic::caller(),
+            proposer_votes,
             title,
             description,
             target,
@@ -152,9 +169,9 @@ async fn propose(
             arguments,
             cycles,
             ic::time(),
-        ).await?;
+        )?;
         Ok(id)
-    }).await
+    })
 }
 
 #[update(name = "queue")]
@@ -170,38 +187,96 @@ fn queue(id: usize) -> Response<u64> {
 #[update(name = "cancel")]
 #[candid_method(update, rename = "cancel")]
 async fn cancel(id: usize) -> Response<()> {
-    BRAVO.with(|bravo| async {
+    let proposer = BRAVO.with(|bravo| {
+        let bravo = bravo.borrow();
+        match bravo.get_proposal(id) {
+            Ok(p) => { Ok(p.to_owned()) }
+            Err(msg) => { Err(msg) }
+        }
+    })?;
+    let gov_token = BRAVO.with(|bravo| {
+        let bravo = bravo.borrow();
+        bravo.gov_token
+    });
+    let result : CallResult<(u64, )> = ic::call(gov_token, "getCurrentVotes", (proposer, )).await;
+    let proposer_votes : u64 = match result {
+        Ok(res) => {
+            res.0
+        }
+        Err(_) => {
+            return Err("Error in getting proposer's vote")
+        }
+    };
+    BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        bravo.cancel(id, ic::time(), ic::caller()).await?;
-        Ok(())
-    }).await
+        bravo.cancel(id, ic::time(), ic::caller(), proposer_votes)
+    })
 }
 
 #[update(name = "execute")]
 #[candid_method(update, rename = "execute")]
 async fn execute(id: usize) -> Response<Vec<u8>> {
-    BRAVO.with(|bravo| async {
+    let timestamp = ic::time();
+    BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let res = bravo.execute(id, ic::time()).await?;
-        Ok(res)
-    }).await
+        bravo.pre_execute(id, timestamp)
+    })?;
+
+    let task = BRAVO.with(|bravo| {
+        let bravo = bravo.borrow();
+        bravo.get_proposal(id).unwrap().task.clone()
+    });
+    let result = ic::call_raw(
+        task.target,
+        task.method.to_owned(),
+        task.arguments.to_owned(),
+        task.cycles,
+    ).await;
+
+    BRAVO.with(move |bravo| {
+        let mut bravo = bravo.borrow_mut();
+        match result {
+            Ok(ret) => {
+                bravo.post_execute(id, true, timestamp);
+                Ok(ret)
+            }
+            Err(_) => {
+                bravo.post_execute(id, false, timestamp);
+                Err("Execute error")
+            }
+        }
+    })
 }
 
 #[update(name = "castVote")]
 #[candid_method(update, rename = "castVote")]
 async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Response<Receipt> {
-    let x1 = BRAVO.with(|x| x);
-    BRAVO.with(|bravo| async {
+    let timestamp = ic::time();
+    let gov_token = BRAVO.with(|bravo| {
+        let bravo = bravo.borrow();
+        bravo.gov_token
+    });
+    let result : CallResult<(u64, )> = ic::call(gov_token, "getPriorVotes", (ic::caller(), timestamp, )).await;
+    let votes : u64 = match result {
+        Ok(res) => {
+            res.0
+        }
+        Err(_) => {
+            return Err("Error in getting proposer's prior vote")
+        }
+    };
+    BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         let receipt = bravo.cast_vote(
             id,
             vote_type,
+            votes,
             reason,
             ic::caller(),
-            ic::time(),
-        ).await?;
+            timestamp,
+        )?;
         Ok(receipt)
-    }).await
+    })
 }
 
 #[update(name = "setPendingAdmin", guard = "is_admin")]
@@ -282,6 +357,22 @@ async fn set_proposal_threshold(threshold: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_proposal_threshold(threshold);
+        Ok(())
+    })
+}
+
+#[update(name = "setTimelockDelay", guard = "is_admin")]
+#[candid_method(update, rename = "setTimelockDelay")]
+async fn set_timelock_delay(delay: u64) -> Response<()> {
+    // if delay < Timelock::MIN_DELAY {
+    //     return Err("Invalid timelock delay: too small");
+    // }
+    // if delay > Timelock::MAX_DELAY {
+    //     return Err("Invalid timelock delay: too large");
+    // }
+    BRAVO.with(|bravo| {
+        let mut bravo = bravo.borrow_mut();
+        bravo.timelock.set_delay(delay);
         Ok(())
     })
 }

@@ -7,9 +7,8 @@
  */
 
 use std::collections::HashMap;
-use ic_cdk::api::call::CallResult;
 use ic_kit::candid::{CandidType, Deserialize};
-use ic_kit::{ic, Principal};
+use ic_kit::{Principal};
 use crate::timelock::{ONE_DAY, Task, Timelock};
 
 type GovernResult<R> = Result<R, &'static str>;
@@ -59,8 +58,8 @@ pub struct GovernorBravo {
     /// whether this bravo has initialized
     initialized: bool,
 
-    gov_token: Principal,
-    timelock: Timelock,
+    pub(crate) gov_token: Principal,
+    pub(crate) timelock: Timelock,
 }
 
 #[derive(CandidType)]
@@ -89,7 +88,7 @@ pub struct Proposal {
     /// id of the proposal
     id: usize,
     /// Creator of the proposal
-    proposer: Principal,
+    pub(crate) proposer: Principal,
     /// Title of this proposal
     title: String, // may limit its length
     /// Description of this proposal
@@ -227,6 +226,7 @@ impl GovernorBravo {
         voting_delay: u64,
         voting_period: u64,
         proposal_threshold: u64,
+        timelock_delay: u64,
         gov_token: Principal
     ) {
         if self.initialized {
@@ -239,12 +239,14 @@ impl GovernorBravo {
         self.voting_delay = voting_delay;
         self.proposal_threshold = proposal_threshold;
         self.gov_token = gov_token;
+        self.timelock.set_delay(timelock_delay);
     }
 
     /// propose a proposal, return id of proposal created
-    pub async fn propose(
+    pub fn propose(
         &mut self,
         proposer: Principal,
+        proposer_votes: u64,
         title: String,
         description: String,
         target: Principal,
@@ -254,16 +256,7 @@ impl GovernorBravo {
         timestamp: u64,
     ) -> GovernResult<usize> {
         // allow addresses above proposal threshold to propose
-        let result : CallResult<(u64, )> = ic::call(self.gov_token, "getCurrentVotes", (proposer, )).await;
-        let votes : u64 = match result {
-            Ok(res) => {
-                res.0
-            }
-            Err(_) => {
-                return Err("Error in getting proposer's vote")
-            }
-        };
-        if votes <= self.proposal_threshold {
+        if proposer_votes <= self.proposal_threshold {
             return Err("proposer votes below proposal threshold");
         }
 
@@ -312,7 +305,7 @@ impl GovernorBravo {
     }
 
     /// execute the task in proposal, return the result in bytes array
-    pub async fn execute(&mut self, id: usize, timestamp: u64) -> GovernResult<Vec<u8>> {
+    pub fn pre_execute(&mut self, id: usize, timestamp: u64) -> GovernResult<()> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Queued {
             return Err("proposal can only be executed if it is queued");
@@ -320,20 +313,23 @@ impl GovernorBravo {
 
         let proposal = &mut self.proposals[id];
         proposal.executing = true;
-        let result = self.timelock.execute_transaction(&proposal.task, timestamp).await;
-        match result {
-            Ok(ret) => {
-                proposal.executed = true;
-                Ok(ret)
-            }
-            Err(msg) => {
-                Err(msg)
-            }
+        self.timelock.pre_execute_transaction(&proposal.task, timestamp)
+    }
+
+    pub fn post_execute(&mut self, id: usize, result: bool, timestamp: u64) -> GovernResult<()> {
+        let proposal_state = self.get_state(id, timestamp)?;
+        if proposal_state != ProposalState::Executing {
+            return Err("proposal is not executing");
         }
+
+        let proposal = &mut self.proposals[id];
+        proposal.executed = result;
+        self.timelock.post_execute_transaction(proposal.task.to_owned(), result);
+        Ok(())
     }
 
     /// cancels a proposal only if sender is the proposer, or proposer delegates dropped below proposal threshold
-    pub async fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal) -> GovernResult<()> {
+    pub fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal, proposer_votes: u64) -> GovernResult<()> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Executing {
             return Err("cannot cancel executing proposal");
@@ -343,16 +339,7 @@ impl GovernorBravo {
 
         let proposal = &mut self.proposals[id];
         if caller != proposal.proposer {
-            let result : CallResult<(u64, )> = ic::call(self.gov_token, "getCurrentVotes", (proposal.proposer, )).await;
-            let votes : u64 = match result {
-                Ok(res) => {
-                    res.0
-                }
-                Err(_) => {
-                    return Err("Error in getting proposer's vote")
-                }
-            };
-            if votes > self.proposal_threshold {
+            if proposer_votes > self.proposal_threshold {
                 return Err("proposer above threshold");
             }
         }
@@ -361,10 +348,11 @@ impl GovernorBravo {
         Ok(())
     }
 
-    pub async fn cast_vote(
+    pub fn cast_vote(
         &mut self,
         id: usize,
         vote_type: VoteType,
+        votes: u64,
         reason: Option<String>,
         caller: Principal,
         timestamp: u64
@@ -373,26 +361,17 @@ impl GovernorBravo {
         if proposal_state != ProposalState::Active {
             return Err("voting is closed");
         }
-        let result : CallResult<(u64, )> = ic::call(self.gov_token, "getPriorVotes", (caller, timestamp, )).await;
-        let votes : u64 = match result {
-            Ok(res) => {
-                res.0
-            }
-            Err(_) => {
-                return Err("Error in getting proposer's prior vote")
-            }
-        };
 
         let proposal = &mut self.proposals[id];
         match vote_type {
             VoteType::Support => {
-                proposal.support_votes += 1;
+                proposal.support_votes += votes;
             }
             VoteType::Against => {
-                proposal.against_votes +=1;
+                proposal.against_votes += votes;
             }
             VoteType::Abstain => {
-                proposal.abstain_votes += 1;
+                proposal.abstain_votes += votes;
             }
         }
         let receipt = Receipt::new(vote_type, votes, reason);
@@ -425,7 +404,7 @@ impl GovernorBravo {
             start + num
         };
         Ok(proposals[start..end].iter().map(|x| {
-            (x.digest(), self.get_state(x.id, timestamp)?)
+            (x.digest(), self.get_state(x.id, timestamp).unwrap())
         }).collect())
     }
 
