@@ -14,7 +14,7 @@ use ic_kit::{ic, Principal};
 use ic_kit::ic::{stable_restore, stable_store};
 use ic_kit::macros::*;
 use crate::governance::{GovernorBravo, GovernorBravoInfo, Proposal, ProposalDigest, ProposalState, Receipt, VoteType};
-use crate::timelock::{Task, Timelock};
+use crate::timelock::{Task};
 
 mod timelock;
 mod governance;
@@ -237,11 +237,11 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
         let mut bravo = bravo.borrow_mut();
         match result {
             Ok(ret) => {
-                bravo.post_execute(id, true, timestamp);
+                bravo.post_execute(id, true, timestamp)?;
                 Ok(ret)
             }
             Err(_) => {
-                bravo.post_execute(id, false, timestamp);
+                bravo.post_execute(id, false, timestamp)?;
                 Err("Execute error")
             }
         }
