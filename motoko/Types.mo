@@ -17,6 +17,7 @@ module {
         #transfer;
         #transferFrom;
         #approve;
+        #delegate;
     };
     public type TransactionStatus = {
         #succeeded;

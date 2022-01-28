@@ -1,8 +1,7 @@
 ## Governance Framework for Projects on the IC
 
 TODO:
-1. add delegation to Token.mo
-2. impl Governor.mo
+1. testing: basic functions, upgrades of governance controlled canisters
 
 
 Ref:

@@ -1,7 +1,39 @@
 {
   "canisters": {
     "token": {
-      "main": "src/token.mo"
+      "main": "motoko/token.mo",
+      "type": "motoko"
+    },
+    "gov_token": { 
+		  "candid": "rust/gov_token/token.did",
+		  "wasm": "target/wasm32-unknown-unknown/release/gov_token.wasm",
+		  "type": "custom",
+      "build": [
+        "cargo build --target wasm32-unknown-unknown --package gov_token --release",
+        "ic-cdk-optimizer target/wasm32-unknown-unknown/release/gov_token.wasm -o target/wasm32-unknown-unknown/release/gov_token_opt.wasm"
+      ]
+    },
+    "governance": { 
+		  "candid": "rust/governance/governance.did",
+		  "wasm": "target/wasm32-unknown-unknown/release/governance.wasm",
+		  "type": "custom",
+      "build": [
+        "cargo build --target wasm32-unknown-unknown --package governance --release",
+        "ic-cdk-optimizer target/wasm32-unknown-unknown/release/governance.wasm -o target/wasm32-unknown-unknown/release/governance_opt.wasm"
+      ]
     }
-  }
+  },
+  "defaults": {
+    "build": {
+      "packtool": ""
+    }
+  },
+  "dfx": "0.8.4",
+    "networks": {
+        "local": {
+            "bind": "127.0.0.1:8000",
+            "type": "ephemeral"
+        }
+    },
+    "version": 1
 }

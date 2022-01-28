@@ -6,16 +6,17 @@
  * Stability  : Experimental
  */
 
-import HashMap "mo:base/HashMap";
-import Principal "mo:base/Principal";
-import Time "mo:base/Time";
-import Iter "mo:base/Iter";
 import Array "mo:base/Array";
+import Buffer "mo:base/Buffer";
+import ExperimentalCycles "mo:base/ExperimentalCycles";
+import HashMap "mo:base/HashMap";
+import Iter "mo:base/Iter";
+import Nat "mo:base/Nat";
 import Option "mo:base/Option";
 import Order "mo:base/Order";
-import Nat "mo:base/Nat";
+import Principal "mo:base/Principal";
 import Result "mo:base/Result";
-import ExperimentalCycles "mo:base/ExperimentalCycles";
+import Time "mo:base/Time";
 import Types "./Types";
 
 shared(msg) actor class Token(
@@ -82,6 +83,23 @@ shared(msg) actor class Token(
     };
     private stable var ops : [TxRecord] = [genesis];
 
+    /// storage for delegation
+    private var delegates = HashMap.HashMap<Principal, Principal>(1, Principal.equal, Principal.hash);
+    private stable var delegateEntries : [(Principal, Principal)] = [];
+
+    type CheckPoint = {
+        timestamp: Time.Time ;
+        votes: Nat;
+    };
+    private func _newCheckPoint(timestamp: Time.Time, votes: Nat) : CheckPoint {
+        {
+            timestamp = timestamp;
+            votes = votes;
+        }
+    };
+    private var checkPoints = HashMap.HashMap<Principal, Buffer.Buffer<CheckPoint>>(1, Principal.equal, Principal.hash);
+    private stable var checkPointEntries : [(Principal, [CheckPoint])] = [];
+
     private func addRecord(
         caller: ?Principal, op: Operation, from: Principal, to: Principal, amount: Nat,
         fee: Nat, timestamp: Time.Time, status: TransactionStatus
@@ -117,6 +135,8 @@ shared(msg) actor class Token(
         let to_balance = _balanceOf(to);
         let to_balance_new : Nat = to_balance + value;
         if (to_balance_new != 0) { balances.put(to, to_balance_new); };
+
+        _moveDelegates(?from, ?to, value, fee);
     };
 
     private func _balanceOf(who: Principal) : Nat {
@@ -411,6 +431,113 @@ shared(msg) actor class Token(
         }
     };
 
+    /**
+     * Delegation interfaces:
+     *  update calls:
+     *      delegate
+     *  query calls:
+     *      getCurrentVotes/getPriorVotes
+     */
+
+    /// delegates votes from `msg.caller` to `delegatee`
+    public shared(msg) func delegate(delegatee: Principal) : async TxReceipt {
+        if (_balanceOf(msg.caller) == 0) { return #Err(#InsufficientBalance); };
+        let value = _delegate(msg.caller, delegatee);
+        let txid = addRecord(?msg.caller, #delegate, msg.caller, delegatee, value, fee, Time.now(), #succeeded);
+        return #Ok(txid);
+    };
+
+    /// gets the current votes balance for `who`
+    public query func getCurrentVotes(who: Principal) : async Nat {
+        _getVotes(who)
+    };
+
+    /// gets the prior number of votes for an account before timestamp
+    public query func getPriorVotes(who: Principal, timestamp: Time.Time) : async Nat {
+        let accountCheckPoints = switch(checkPoints.get(who)) {
+            case (?cp) { cp };
+            case (_) { return 0; };
+        };
+        let currentCheckPoint = accountCheckPoints.get(accountCheckPoints.size() - 1);
+        if (currentCheckPoint.timestamp <= timestamp) {
+            return currentCheckPoint.votes;
+        };
+        let oldestCheckPoint = accountCheckPoints.get(0);
+        if (oldestCheckPoint.timestamp > timestamp) {
+            return oldestCheckPoint.votes;
+        };
+
+        // binary search
+        var lower = 0;
+        var upper = accountCheckPoints.size() - 1;
+        while (lower > upper) {
+            let center = upper - (upper - lower) / 2;
+            let cp = accountCheckPoints.get(center);
+            if (cp.timestamp == timestamp) {
+                return cp.votes;
+            } else if (cp.timestamp < timestamp) {
+                lower := center;
+            } else {
+                upper := center - 1;
+            };
+        };
+        return accountCheckPoints.get(lower).votes;
+    };
+
+    private func _delegate(delegator: Principal, delegatee: Principal) : Nat {
+        let currentDelegate = delegates.get(delegator);
+        let delegatorBalance = _balanceOf(delegator);
+
+        delegates.put(delegator, delegatee);
+        _moveDelegates(currentDelegate, ?delegatee, delegatorBalance, fee);
+
+        delegatorBalance
+    };    
+
+    private func _moveDelegates(from: ?Principal, to: ?Principal, amount: Nat, fee: Nat) {
+        if (amount > 0) {
+            if (Option.isSome(from)) {
+                let from_ = Option.get(from, blackhole);
+                let fromDelegatesOld = _getVotes(from_);
+                let fromDelegatesNew = fromDelegatesOld - amount - fee;
+                _writeCheckPoint(from_, fromDelegatesNew);
+            };
+            if (Option.isSome(to)) {
+                let to_ = Option.get(to, blackhole);
+                let toDelegatesOld = _getVotes(to_);
+                let toDelegatesNew = toDelegatesOld + amount;
+                _writeCheckPoint(to_, toDelegatesNew);
+            };
+        };
+    };
+
+    private func _writeCheckPoint(who: Principal, newVotes: Nat) {
+        let checkPoint = switch (checkPoints.get(who)) {
+            case (?cp) {
+                cp
+            };
+            case (_) {
+                Buffer.Buffer<CheckPoint>(1);
+            };
+        };
+        let size = checkPoint.size();
+        let timestamp = Time.now();
+        if (size > 0 and checkPoint.get(size - 1).timestamp == timestamp) {
+            ignore checkPoint.removeLast();
+        };
+        checkPoint.add(_newCheckPoint(Time.now(), newVotes));
+        checkPoints.put(who, checkPoint);
+    };
+
+    private func _getVotes(who: Principal) : Nat {
+        switch(checkPoints.get(who)) {
+            case (?checkPoint) {
+                checkPoint.get(checkPoint.size() - 1).votes
+            };
+            case (_) { 0 }
+        };
+    };
+
     /*
     * upgrade functions
     */
@@ -424,6 +551,15 @@ shared(msg) actor class Token(
             size += 1;
         };
         allowanceEntries := Array.freeze(temp);
+
+        delegateEntries := Iter.toArray(delegates.entries());
+
+        size := checkPoints.size();
+        let buf = Buffer.Buffer<(Principal, [CheckPoint])>(size);
+        for ((k, v) in checkPoints.entries()) {
+            buf.add((k, v.toArray()));
+        };
+        checkPointEntries := buf.toArray();
     };
 
     system func postupgrade() {
@@ -434,5 +570,17 @@ shared(msg) actor class Token(
             allowances.put(k, allowed_temp);
         };
         allowanceEntries := [];
+
+        delegates := HashMap.fromIter<Principal, Principal>(delegateEntries.vals(), 1, Principal.equal, Principal.hash);
+        delegateEntries := [];
+
+        for ((k, v) in checkPointEntries.vals()) {
+            let cps = Buffer.Buffer<CheckPoint>(v.size());
+            for (cp in v.vals()) {
+                cps.add(cp);
+            };
+            checkPoints.put(k, cps);
+        };
+        checkPointEntries := [];
     };
 };

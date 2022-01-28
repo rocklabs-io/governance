@@ -1,0 +1,57 @@
+type GovernorBravoInfo = record {
+  admin : principal;
+  voting_period : nat64;
+  name : text;
+  quorum_votes : nat64;
+  proposals_num : nat64;
+  proposal_threshold : nat64;
+  pending_admin : opt principal;
+  gov_token : principal;
+  voting_delay : nat64;
+};
+type Proposal = record {
+  id : nat64;
+  title : text;
+  abstain_votes : nat64;
+  canceled : bool;
+  task : Task;
+  description : text;
+  end_time : nat64;
+  start_time : nat64;
+  executing : bool;
+  proposer : principal;
+  executed : bool;
+  support_votes : nat64;
+  receipts : vec record { principal; Receipt };
+  against_votes : nat64;
+};
+type ProposalState = variant {
+  Queued;
+  Active;
+  Executing;
+  Executed;
+  Succeeded;
+  Defeated;
+  Expired;
+  Canceled;
+  Pending;
+};
+type Receipt = record {
+  votes : nat64;
+  vote_type : VoteType;
+  reason : opt text;
+};
+type Result = variant { Ok : GovernorBravoInfo; Err : text };
+type Result_1 = variant { Ok : record { Proposal; ProposalState }; Err : text };
+type Task = record {
+  eta : nat64;
+  method : text;
+  cycles : nat64;
+  target : principal;
+  arguments : vec nat8;
+};
+type VoteType = variant { Support; Abstain; Against };
+service : {
+  getGovernorBravoInfo : () -> (Result) query;
+  getProposal : (nat64) -> (Result_1) query;
+}
