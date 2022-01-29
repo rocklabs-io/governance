@@ -5,11 +5,24 @@ type GovernorBravoInfo = record {
   quorum_votes : nat64;
   proposals_num : nat64;
   proposal_threshold : nat64;
+  stable_memory : StableMemory;
   pending_admin : opt principal;
   gov_token : principal;
   voting_delay : nat64;
 };
-type Proposal = record {
+type Position = record { len : nat64; offset : nat64 };
+type ProposalDigest = record {
+  id : nat64;
+  title : text;
+  abstain_votes : nat64;
+  receipt_num : nat64;
+  end_time : nat64;
+  start_time : nat64;
+  proposer : principal;
+  support_votes : nat64;
+  against_votes : nat64;
+};
+type ProposalInfo = record {
   id : nat64;
   title : text;
   abstain_votes : nat64;
@@ -22,7 +35,6 @@ type Proposal = record {
   proposer : principal;
   executed : bool;
   support_votes : nat64;
-  receipts : vec record { principal; Receipt };
   against_votes : nat64;
 };
 type ProposalState = variant {
@@ -39,10 +51,36 @@ type ProposalState = variant {
 type Receipt = record {
   votes : nat64;
   vote_type : VoteType;
+  reason : opt Position;
+};
+type ReceiptDigest = record { votes : nat64; vote_type : VoteType };
+type ReceiptInfo = record {
+  votes : nat64;
+  vote_type : VoteType;
   reason : opt text;
 };
-type Result = variant { Ok : GovernorBravoInfo; Err : text };
-type Result_1 = variant { Ok : record { Proposal; ProposalState }; Err : text };
+type Result = variant { Ok; Err : text };
+type Result_1 = variant { Ok : Receipt; Err : text };
+type Result_10 = variant { Ok : nat64; Err : text };
+type Result_11 = variant { Ok : nat64; Err : text };
+type Result_2 = variant { Ok : vec nat8; Err : text };
+type Result_3 = variant { Ok : GovernorBravoInfo; Err : text };
+type Result_4 = variant {
+  Ok : record { ProposalInfo; ProposalState };
+  Err : text;
+};
+type Result_5 = variant { Ok : ProposalState; Err : text };
+type Result_6 = variant {
+  Ok : vec record { ProposalDigest; ProposalState };
+  Err : text;
+};
+type Result_7 = variant { Ok : ReceiptInfo; Err : text };
+type Result_8 = variant {
+  Ok : vec record { principal; ReceiptDigest };
+  Err : text;
+};
+type Result_9 = variant { Ok : Task; Err : text };
+type StableMemory = record { offset : nat64; capacity : nat32 };
 type Task = record {
   eta : nat64;
   method : text;
@@ -51,7 +89,24 @@ type Task = record {
   arguments : vec nat8;
 };
 type VoteType = variant { Support; Abstain; Against };
-service : {
-  getGovernorBravoInfo : () -> (Result) query;
-  getProposal : (nat64) -> (Result_1) query;
+service : (text, nat64, nat64, nat64, nat64, nat64, principal) -> {
+  cancel : (nat64) -> (Result);
+  castVote : (nat64, VoteType, opt text) -> (Result_1);
+  execute : (nat64) -> (Result_2);
+  getGovernorBravoInfo : () -> (Result_3) query;
+  getProposal : (nat64) -> (Result_4) query;
+  getProposalState : (nat64) -> (Result_5) query;
+  getProposals : (nat64, nat64) -> (Result_6) query;
+  getReceipt : (nat64, principal) -> (Result_7) query;
+  getReceipts : (nat64, nat64, nat64) -> (Result_8) query;
+  getTask : (nat64) -> (Result_9) query;
+  propose : (text, text, principal, text, vec nat8, nat64) -> (Result_10);
+  queue : (nat64) -> (Result_11);
+  setAdmin : () -> (Result);
+  setPendingAdmin : (principal) -> (Result);
+  setProposalThreshold : (nat64) -> (Result);
+  setQuorumVotes : (nat64) -> (Result);
+  setTimelockDelay : (nat64) -> (Result);
+  setVoteDelay : (nat64) -> (Result);
+  setVotePeriod : (nat64) -> (Result);
 }

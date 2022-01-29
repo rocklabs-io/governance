@@ -7,17 +7,17 @@
  */
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use ic_cdk::api::call::CallResult;
 use ic_kit::candid::{export_service, candid_method};
 use ic_kit::{ic, Principal};
 use ic_kit::ic::{stable_restore, stable_store};
 use ic_kit::macros::*;
-use crate::governance::{GovernorBravo, GovernorBravoInfo, Proposal, ProposalDigest, ProposalState, Receipt, VoteType};
+use crate::governance::{GovernorBravo, GovernorBravoInfo, ProposalDigest, ProposalInfo, ProposalState, Receipt, ReceiptDigest, ReceiptInfo, VoteType};
 use crate::timelock::{Task};
 
 mod timelock;
 mod governance;
+mod stable;
 
 thread_local! {
     static BRAVO : RefCell<GovernorBravo> = RefCell::new(GovernorBravo::default());
@@ -75,7 +75,7 @@ fn get_governor_bravo_info() -> Response<GovernorBravoInfo> {
 
 #[query(name = "getProposal")]
 #[candid_method(query, rename = "getProposal")]
-fn get_proposal(id: usize) -> Response<(Proposal, ProposalState)> {
+fn get_proposal(id: usize) -> Response<(ProposalInfo, ProposalState)> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         let proposal = bravo.get_proposal(id)?;
@@ -109,14 +109,14 @@ fn get_proposals(page: usize, num: usize) -> Response<Vec<(ProposalDigest, Propo
 fn get_task(id: usize) -> Response<Task> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
-        let task = bravo.get_proposal(id)?.task.to_owned();
+        let task = bravo.get_task(id)?;
         Ok(task)
     })
 }
 
 #[query(name = "getReceipt")]
 #[candid_method(query, rename = "getReceipt")]
-fn get_receipt(id: usize, voter: Principal) -> Response<Receipt> {
+fn get_receipt(id: usize, voter: Principal) -> Response<ReceiptInfo> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         let receipt = bravo.get_receipt(id, voter)?.to_owned();
@@ -126,10 +126,10 @@ fn get_receipt(id: usize, voter: Principal) -> Response<Receipt> {
 
 #[query(name = "getReceipts")]
 #[candid_method(query, rename = "getReceipts")]
-fn get_receipts(id: usize) -> Response<HashMap<Principal, Receipt>> {
+fn get_receipts(id: usize, page: usize, num: usize) -> Response<Vec<(Principal, ReceiptDigest)>> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
-        let receipts = bravo.get_proposal(id)?.receipts.to_owned();
+        let receipts = bravo.get_receipt_pages(id, page, num)?;
         Ok(receipts)
     })
 }
@@ -224,8 +224,8 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
 
     let task = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
-        bravo.get_proposal(id).unwrap().task.clone()
-    });
+        bravo.get_task(id)
+    })?;
     let result = ic::call_raw(
         task.target,
         task.method.to_owned(),
