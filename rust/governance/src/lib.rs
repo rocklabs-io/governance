@@ -7,17 +7,21 @@
  */
 
 use std::cell::RefCell;
+use cap_sdk::{CapEnv, handshake, IndefiniteEventBuilder, insert};
+use cap_sdk::DetailValue::U64;
 use ic_cdk::api::call::CallResult;
 use ic_kit::candid::{export_service, candid_method, Nat};
 use ic_kit::{ic, Principal};
 use ic_kit::ic::{stable_restore, stable_store};
 use ic_kit::macros::*;
+use crate::cap::{AcceptAdminEvent, CancelEvent, ExecuteEvent, GovEvent, ProposeEvent, QueueEvent, SetPendingAdminEvent, VoteEvent};
 use crate::governance::{GovernorBravo, GovernorBravoInfo, ProposalDigest, ProposalInfo, ProposalState, Receipt, ReceiptDigest, ReceiptInfo, VoteType};
 use crate::timelock::{Task};
 
 mod timelock;
 mod governance;
 mod stable;
+mod cap;
 
 thread_local! {
     static BRAVO : RefCell<GovernorBravo> = RefCell::new(GovernorBravo::default());
@@ -47,6 +51,7 @@ fn initialize(
     proposal_threshold: u64,
     timelock_delay: u64,
     gov_token: Principal,
+    cap: Principal,
 ) {
     // assert!(voting_delay >= GovernorBravo::MIN_VOTING_DELAY && voting_delay <= GovernorBravo::MAX_VOTING_DELAY);
     // assert!(voting_period >= GovernorBravo::MIN_VOTING_PERIOD && voting_period <= GovernorBravo::MAX_VOTING_PERIOD);
@@ -63,7 +68,8 @@ fn initialize(
             timelock_delay,
             gov_token,
         );
-    })
+    });
+    handshake(1_000_000_000_000, Some(cap));
 }
 
 #[query(name = "getGovernorBravoInfo")]
@@ -160,36 +166,50 @@ async fn propose(
             return Err("Error in getting proposer's vote")
         }
     };
-    BRAVO.with(|bravo| {
+    let id = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let id = bravo.propose(
+        bravo.propose(
             caller,
             proposer_votes,
-            title,
-            description,
+            title.clone(),
+            description.clone(),
             target,
-            method,
-            arguments,
+            method.clone(),
+            arguments.clone(),
             cycles,
             ic::time(),
-        )?;
-        Ok(id)
-    })
+        )
+    })?;
+    insert(ProposeEvent::new(
+        caller,
+        id as u64,
+        title,
+        description,
+        target,
+        method,
+        arguments,
+        cycles
+    ).to_indefinite_event());
+    Ok(id)
 }
 
 #[update(name = "queue")]
 #[candid_method(update, rename = "queue")]
 fn queue(id: usize) -> Response<u64> {
-    BRAVO.with(|bravo| {
+    let caller = ic::caller();
+    let eta = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let eta = bravo.queue(id, ic::time())?;
-        Ok(eta)
-    })
+        bravo.queue(id, ic::time())
+
+    })?;
+    insert(QueueEvent::new(caller, id as u64, eta).to_indefinite_event());
+    Ok(eta)
 }
 
 #[update(name = "cancel")]
 #[candid_method(update, rename = "cancel")]
 async fn cancel(id: usize) -> Response<()> {
+    let caller = ic::caller();
     let proposer = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         match bravo.get_proposal(id) {
@@ -213,12 +233,15 @@ async fn cancel(id: usize) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.cancel(id, ic::time(), ic::caller(), proposer_votes)
-    })
+    });
+    insert(CancelEvent::new(caller, id as u64).to_indefinite_event());
+    Ok(())
 }
 
 #[update(name = "execute")]
 #[candid_method(update, rename = "execute")]
 async fn execute(id: usize) -> Response<Vec<u8>> {
+    let caller = ic::caller();
     let timestamp = ic::time();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
@@ -236,7 +259,7 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
         task.cycles,
     ).await;
 
-    BRAVO.with(move |bravo| {
+    let ret = BRAVO.with(move |bravo| {
         let mut bravo = bravo.borrow_mut();
         match result {
             Ok(ret) => {
@@ -248,7 +271,9 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
                 Err("Execute error")
             }
         }
-    })
+    })?;
+    insert(ExecuteEvent::new(caller, id as u64, ret.clone()).to_indefinite_event());
+    Ok(ret)
 }
 
 #[update(name = "castVote")]
@@ -265,46 +290,52 @@ async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Re
         Ok(res) => {
             res.0
         }
-        Err(e) => {
+        Err(_) => {
             return Err("Error in getting proposer's prior vote");
         }
     };
-    BRAVO.with(|bravo| {
+    let receipt = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let receipt = bravo.cast_vote(
+        bravo.cast_vote(
             id,
-            vote_type,
-            votes,
+            vote_type.clone(),
+            votes.clone(),
             reason,
             caller,
             timestamp,
-        )?;
-        Ok(receipt)
-    })
+        )
+    })?;
+    insert(VoteEvent::new(caller, id as u64, votes, vote_type).to_indefinite_event());
+    Ok(receipt)
 }
 
 #[update(name = "setPendingAdmin", guard = "is_admin")]
 #[candid_method(update, rename = "setPendingAdmin")]
 async fn set_pending_admin(pending_admin: Principal) -> Response<()> {
+    let caller = ic::caller();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_pending_admin(pending_admin);
-        Ok(())
-    })
+    });
+    insert(SetPendingAdminEvent::new(caller, pending_admin).to_indefinite_event());
+    Ok(())
 }
 
 #[update(name = "acceptAdmin")]
 #[candid_method(update, rename = "setAdmin")]
 fn accept_admin() -> Response<()> {
+    let caller = ic::caller();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        if bravo.pending_admin != Some(ic::caller()) {
+        if bravo.pending_admin != Some(caller) {
             Err("Unauthorized")
         } else {
             bravo.accept_admin();
             Ok(())
         }
-    })
+    })?;
+    insert(AcceptAdminEvent::new(caller).to_indefinite_event());
+    Ok(())
 }
 
 #[update(name = "setQuorumVotes", guard = "is_admin")]
@@ -313,8 +344,15 @@ async fn set_quorum_votes(quorum: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_quorum_votes(quorum);
-        Ok(())
-    })
+    });
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setQuorumVotes")
+        .details(vec![("quorumVotes".to_string(), U64(quorum))])
+        .build()
+        .unwrap()
+    );
+    Ok(())
 }
 
 #[update(name = "setVotePeriod", guard = "is_admin")]
@@ -329,8 +367,15 @@ async fn set_vote_period(period: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_vote_period(period);
-        Ok(())
-    })
+    });
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setVotePeriod")
+        .details(vec![("votePeriod".to_string(), U64(period))])
+        .build()
+        .unwrap()
+    );
+    Ok(())
 }
 
 #[update(name = "setVoteDelay", guard = "is_admin")]
@@ -345,8 +390,15 @@ async fn set_vote_delay(delay: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_vote_delay(delay);
-        Ok(())
-    })
+    });
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setVoteDelay")
+        .details(vec![("voteDelay".to_string(), U64(delay))])
+        .build()
+        .unwrap()
+    );
+    Ok(())
 }
 
 #[update(name = "setProposalThreshold", guard = "is_admin")]
@@ -361,8 +413,15 @@ async fn set_proposal_threshold(threshold: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_proposal_threshold(threshold);
-        Ok(())
-    })
+    });
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setProposalThreshold")
+        .details(vec![("proposalThreshold".to_string(), U64(threshold))])
+        .build()
+        .unwrap()
+    );
+    Ok(())
 }
 
 #[update(name = "setTimelockDelay", guard = "is_admin")]
@@ -377,25 +436,33 @@ async fn set_timelock_delay(delay: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.timelock.set_delay(delay);
-        Ok(())
-    })
+    });
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setTimelockDelay")
+        .details(vec![("timelockDelay".to_string(), U64(delay))])
+        .build()
+        .unwrap()
+    );
+    Ok(())
 }
 
 #[pre_upgrade]
 fn pre_upgrade() {
     BRAVO.with(|b| {
         let bravo = b.borrow();
-        stable_store((bravo.to_owned(), )).unwrap();
+        stable_store((bravo.to_owned(), CapEnv::to_archive(), )).unwrap();
     });
 }
 
 #[post_upgrade]
 fn post_upgrade() {
-    let (bravo, ): (GovernorBravo, ) = stable_restore().unwrap();
+    let (bravo, cap_env, ): (GovernorBravo, CapEnv, ) = stable_restore().unwrap();
     BRAVO.with(|b| {
         let mut b_mut = b.borrow_mut();
         *b_mut = bravo;
     });
+    CapEnv::load_from_archive(cap_env);
 }
 
 // needed to export candid on save

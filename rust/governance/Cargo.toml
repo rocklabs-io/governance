@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 ic-kit = "0.4.3"
 ic-cdk = "0.3.1"
 serde = "1.0"
+cap-sdk = { git = "https://github.com/Psychedelic/cap.git", branch = "cap-sdk" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 async-std = { version="1.10.0", features = ["attributes"] }
