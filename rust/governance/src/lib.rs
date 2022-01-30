@@ -189,20 +189,21 @@ async fn propose(
         method,
         arguments,
         cycles
-    ).to_indefinite_event());
+    ).to_indefinite_event()).await;
+
     Ok(id)
 }
 
 #[update(name = "queue")]
 #[candid_method(update, rename = "queue")]
-fn queue(id: usize) -> Response<u64> {
+async fn queue(id: usize) -> Response<u64> {
     let caller = ic::caller();
     let eta = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.queue(id, ic::time())
 
     })?;
-    insert(QueueEvent::new(caller, id as u64, eta).to_indefinite_event());
+    insert(QueueEvent::new(caller, id as u64, eta).to_indefinite_event()).await;
     Ok(eta)
 }
 
@@ -233,8 +234,8 @@ async fn cancel(id: usize) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.cancel(id, ic::time(), ic::caller(), proposer_votes)
-    });
-    insert(CancelEvent::new(caller, id as u64).to_indefinite_event());
+    })?;
+    insert(CancelEvent::new(caller, id as u64).to_indefinite_event()).await;
     Ok(())
 }
 
@@ -272,7 +273,7 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
             }
         }
     })?;
-    insert(ExecuteEvent::new(caller, id as u64, ret.clone()).to_indefinite_event());
+    insert(ExecuteEvent::new(caller, id as u64, ret.clone()).to_indefinite_event()).await;
     Ok(ret)
 }
 
@@ -305,7 +306,7 @@ async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Re
             timestamp,
         )
     })?;
-    insert(VoteEvent::new(caller, id as u64, votes, vote_type).to_indefinite_event());
+    insert(VoteEvent::new(caller, id as u64, votes, vote_type).to_indefinite_event()).await;
     Ok(receipt)
 }
 
@@ -317,13 +318,13 @@ async fn set_pending_admin(pending_admin: Principal) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.set_pending_admin(pending_admin);
     });
-    insert(SetPendingAdminEvent::new(caller, pending_admin).to_indefinite_event());
+    insert(SetPendingAdminEvent::new(caller, pending_admin).to_indefinite_event()).await;
     Ok(())
 }
 
 #[update(name = "acceptAdmin")]
 #[candid_method(update, rename = "setAdmin")]
-fn accept_admin() -> Response<()> {
+async fn accept_admin() -> Response<()> {
     let caller = ic::caller();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
@@ -334,7 +335,7 @@ fn accept_admin() -> Response<()> {
             Ok(())
         }
     })?;
-    insert(AcceptAdminEvent::new(caller).to_indefinite_event());
+    insert(AcceptAdminEvent::new(caller).to_indefinite_event()).await;
     Ok(())
 }
 
@@ -351,7 +352,7 @@ async fn set_quorum_votes(quorum: u64) -> Response<()> {
         .details(vec![("quorumVotes".to_string(), U64(quorum))])
         .build()
         .unwrap()
-    );
+    ).await;
     Ok(())
 }
 
@@ -374,7 +375,7 @@ async fn set_vote_period(period: u64) -> Response<()> {
         .details(vec![("votePeriod".to_string(), U64(period))])
         .build()
         .unwrap()
-    );
+    ).await;
     Ok(())
 }
 
@@ -397,7 +398,7 @@ async fn set_vote_delay(delay: u64) -> Response<()> {
         .details(vec![("voteDelay".to_string(), U64(delay))])
         .build()
         .unwrap()
-    );
+    ).await;
     Ok(())
 }
 
@@ -420,7 +421,7 @@ async fn set_proposal_threshold(threshold: u64) -> Response<()> {
         .details(vec![("proposalThreshold".to_string(), U64(threshold))])
         .build()
         .unwrap()
-    );
+    ).await;
     Ok(())
 }
 
@@ -443,7 +444,7 @@ async fn set_timelock_delay(delay: u64) -> Response<()> {
         .details(vec![("timelockDelay".to_string(), U64(delay))])
         .build()
         .unwrap()
-    );
+    ).await;
     Ok(())
 }
 
