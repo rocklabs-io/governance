@@ -8,7 +8,7 @@
 
 use std::cell::RefCell;
 use ic_cdk::api::call::CallResult;
-use ic_kit::candid::{export_service, candid_method};
+use ic_kit::candid::{export_service, candid_method, Nat};
 use ic_kit::{ic, Principal};
 use ic_kit::ic::{stable_restore, stable_store};
 use ic_kit::macros::*;
@@ -36,9 +36,10 @@ fn is_admin() -> Result<(), String> {
     })
 }
 
-#[init(guard = "is_admin")]
+#[init]
 #[candid_method(init)]
 fn initialize(
+    admin: Principal,
     name: String,
     quorum_votes: u64,
     voting_delay: u64,
@@ -53,6 +54,7 @@ fn initialize(
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.initialize(
+            admin,
             name,
             quorum_votes,
             voting_delay,
@@ -144,12 +146,13 @@ async fn propose(
     arguments: Vec<u8>,
     cycles: u64,
 ) -> Response<usize> {
+    let caller = ic::caller();
     let gov_token = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(u64, )> = ic::call(gov_token, "getCurrentVotes", (ic::caller(), )).await;
-    let proposer_votes : u64 = match result {
+    let result : CallResult<(Nat, )> = ic::call(gov_token, "getCurrentVotes", (caller, )).await;
+    let proposer_votes : Nat = match result {
         Ok(res) => {
             res.0
         }
@@ -160,7 +163,7 @@ async fn propose(
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         let id = bravo.propose(
-            ic::caller(),
+            caller,
             proposer_votes,
             title,
             description,
@@ -198,8 +201,8 @@ async fn cancel(id: usize) -> Response<()> {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(u64, )> = ic::call(gov_token, "getCurrentVotes", (proposer, )).await;
-    let proposer_votes : u64 = match result {
+    let result : CallResult<(Nat, )> = ic::call(gov_token, "getCurrentVotes", (proposer, )).await;
+    let proposer_votes : Nat = match result {
         Ok(res) => {
             res.0
         }
@@ -251,18 +254,19 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
 #[update(name = "castVote")]
 #[candid_method(update, rename = "castVote")]
 async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Response<Receipt> {
+    let caller = ic::caller();
     let timestamp = ic::time();
     let gov_token = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(u64, )> = ic::call(gov_token, "getPriorVotes", (ic::caller(), timestamp, )).await;
-    let votes : u64 = match result {
+    let result : CallResult<(Nat, )> = ic::call(gov_token, "getPriorVotes", (caller, Nat::from(timestamp), )).await;
+    let votes : Nat = match result {
         Ok(res) => {
             res.0
         }
-        Err(_) => {
-            return Err("Error in getting proposer's prior vote")
+        Err(e) => {
+            return Err("Error in getting proposer's prior vote");
         }
     };
     BRAVO.with(|bravo| {
@@ -272,7 +276,7 @@ async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Re
             vote_type,
             votes,
             reason,
-            ic::caller(),
+            caller,
             timestamp,
         )?;
         Ok(receipt)

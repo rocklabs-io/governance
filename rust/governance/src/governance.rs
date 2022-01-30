@@ -7,7 +7,7 @@
  */
 
 use std::collections::HashMap;
-use ic_kit::candid::{CandidType, Deserialize};
+use ic_kit::candid::{CandidType, Deserialize, Nat};
 use ic_kit::{Principal};
 use crate::stable::{Memory, Position, StableMemory};
 use crate::timelock::{ONE_DAY, Task, Timelock};
@@ -104,11 +104,11 @@ pub struct Proposal {
     /// The time at which voting ends: votes must be cast prior to this timestamp
     end_time: u64,
     /// Current number of votes in favor of this proposal
-    support_votes: u64,
+    support_votes: Nat,
     /// Current number of votes in opposition to this proposal
-    against_votes: u64,
+    against_votes: Nat,
     /// Current number of votes for abstaining for this proposal
-    abstain_votes: u64,
+    abstain_votes: Nat,
     /// Flag marking whether the proposal has been canceled
     canceled: bool,
     /// Flag marking whether the proposal is executing
@@ -137,11 +137,11 @@ pub struct ProposalInfo {
     /// The time at which voting ends: votes must be cast prior to this timestamp
     end_time: u64,
     /// Current number of votes in favor of this proposal
-    support_votes: u64,
+    support_votes: Nat,
     /// Current number of votes in opposition to this proposal
-    against_votes: u64,
+    against_votes: Nat,
     /// Current number of votes for abstaining for this proposal
-    abstain_votes: u64,
+    abstain_votes: Nat,
     /// Flag marking whether the proposal has been canceled
     canceled: bool,
     /// Flag marking whether the proposal is executing
@@ -164,11 +164,11 @@ pub struct ProposalDigest {
     /// The time at which voting ends: votes must be cast prior to this timestamp
     end_time: u64,
     /// Current number of votes in favor of this proposal
-    support_votes: u64,
+    support_votes: Nat,
     /// Current number of votes in opposition to this proposal
-    against_votes: u64,
+    against_votes: Nat,
     /// Current number of votes for abstaining for this proposal
-    abstain_votes: u64,
+    abstain_votes: Nat,
     /// Number of voter
     receipt_num: usize,
 }
@@ -194,9 +194,9 @@ impl Proposal {
             task: Task::new(target, method, arguments, cycles),
             start_time,
             end_time,
-            support_votes: 0,
-            against_votes: 0,
-            abstain_votes: 0,
+            support_votes: Nat::from(0),
+            against_votes: Nat::from(0),
+            abstain_votes: Nat::from(0),
             canceled: false,
             executed: false,
             executing: false,
@@ -213,9 +213,9 @@ impl Proposal {
             task: self.task.clone(),
             start_time: self.start_time,
             end_time: self.end_time,
-            support_votes: self.support_votes,
-            against_votes: self.against_votes,
-            abstain_votes: self.abstain_votes,
+            support_votes: self.support_votes.to_owned(),
+            against_votes: self.against_votes.to_owned(),
+            abstain_votes: self.abstain_votes.to_owned(),
             canceled: self.canceled,
             executing: self.executing,
             executed: self.executed,
@@ -229,9 +229,9 @@ impl Proposal {
             title: self.title.clone(),
             start_time: self.start_time,
             end_time: self.end_time,
-            support_votes: self.support_votes,
-            against_votes: self.against_votes,
-            abstain_votes: self.abstain_votes,
+            support_votes: self.support_votes.to_owned(),
+            against_votes: self.against_votes.to_owned(),
+            abstain_votes: self.abstain_votes.to_owned(),
             receipt_num: self.receipts.len(),
         }
     }
@@ -242,7 +242,7 @@ pub struct Receipt {
     /// Whether or not the voter supports the proposal or abstains
     vote_type: VoteType,
     /// votes number
-    votes: u64,
+    votes: Nat,
     /// optional: voting reason
     reason: Option<Position>,
 }
@@ -250,18 +250,18 @@ pub struct Receipt {
 #[derive(Deserialize, CandidType, Clone)]
 pub struct ReceiptInfo {
     vote_type: VoteType,
-    votes: u64,
+    votes: Nat,
     reason: Option<String>,
 }
 
 #[derive(Deserialize, CandidType, Clone)]
 pub struct ReceiptDigest {
     vote_type: VoteType,
-    votes: u64,
+    votes: Nat,
 }
 
 impl Receipt {
-    fn new(vote_type: VoteType, votes: u64, reason: Option<Position>) -> Self {
+    fn new(vote_type: VoteType, votes: Nat, reason: Option<Position>) -> Self {
         Self {
             vote_type,
             votes,
@@ -271,7 +271,7 @@ impl Receipt {
 
     fn digest(&self) -> ReceiptDigest {
         ReceiptDigest {
-            votes: self.votes,
+            votes: self.votes.clone(),
             vote_type: self.vote_type.clone(),
         }
     }
@@ -279,7 +279,7 @@ impl Receipt {
     fn to_info(&self, reason: Option<String>) -> ReceiptInfo {
         ReceiptInfo {
             vote_type: self.vote_type.clone(),
-            votes: self.votes,
+            votes: self.votes.clone(),
             reason
         }
     }
@@ -302,6 +302,7 @@ impl GovernorBravo {
     /// initialize a Governor Bravo
     pub fn initialize(
         &mut self,
+        admin: Principal,
         name: String,
         quorum_votes: u64,
         voting_delay: u64,
@@ -314,6 +315,7 @@ impl GovernorBravo {
             return;
         }
         self.initialized = true;
+        self.admin = admin;
         self.name = name;
         self.quorum_votes = quorum_votes;
         self.voting_period = voting_period;
@@ -327,7 +329,7 @@ impl GovernorBravo {
     pub fn propose(
         &mut self,
         proposer: Principal,
-        proposer_votes: u64,
+        proposer_votes: Nat,
         title: String,
         description: String,
         target: Principal,
@@ -417,7 +419,7 @@ impl GovernorBravo {
     }
 
     /// cancels a proposal only if sender is the proposer, or proposer delegates dropped below proposal threshold
-    pub fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal, proposer_votes: u64) -> GovernResult<()> {
+    pub fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal, proposer_votes: Nat) -> GovernResult<()> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Executing {
             return Err("cannot cancel executing proposal");
@@ -440,7 +442,7 @@ impl GovernorBravo {
         &mut self,
         id: usize,
         vote_type: VoteType,
-        votes: u64,
+        votes: Nat,
         reason: Option<String>,
         caller: Principal,
         timestamp: u64,
@@ -453,13 +455,13 @@ impl GovernorBravo {
         let proposal = &mut self.proposals[id];
         match vote_type {
             VoteType::Support => {
-                proposal.support_votes += votes;
+                proposal.support_votes += votes.clone();
             }
             VoteType::Against => {
-                proposal.against_votes += votes;
+                proposal.against_votes += votes.clone();
             }
             VoteType::Abstain => {
-                proposal.abstain_votes += votes;
+                proposal.abstain_votes += votes.clone();
             }
         }
 
@@ -578,7 +580,7 @@ impl GovernorBravo {
     }
 
     pub fn get_state(&self, id: usize, timestamp: u64) -> GovernResult<ProposalState> {
-        if id < self.proposals.len() { return Err("invalid proposal id"); }
+        if id >= self.proposals.len() { return Err("invalid proposal id"); }
         let proposal = &self.proposals[id];
         return Ok(
             if proposal.canceled {

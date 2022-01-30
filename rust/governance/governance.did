@@ -14,18 +14,18 @@ type Position = record { len : nat64; offset : nat64 };
 type ProposalDigest = record {
   id : nat64;
   title : text;
-  abstain_votes : nat64;
+  abstain_votes : nat;
   receipt_num : nat64;
   end_time : nat64;
   start_time : nat64;
   proposer : principal;
-  support_votes : nat64;
-  against_votes : nat64;
+  support_votes : nat;
+  against_votes : nat;
 };
 type ProposalInfo = record {
   id : nat64;
   title : text;
-  abstain_votes : nat64;
+  abstain_votes : nat;
   canceled : bool;
   task : Task;
   description : text;
@@ -34,8 +34,8 @@ type ProposalInfo = record {
   executing : bool;
   proposer : principal;
   executed : bool;
-  support_votes : nat64;
-  against_votes : nat64;
+  support_votes : nat;
+  against_votes : nat;
 };
 type ProposalState = variant {
   Queued;
@@ -49,13 +49,13 @@ type ProposalState = variant {
   Pending;
 };
 type Receipt = record {
-  votes : nat64;
+  votes : nat;
   vote_type : VoteType;
   reason : opt Position;
 };
-type ReceiptDigest = record { votes : nat64; vote_type : VoteType };
+type ReceiptDigest = record { votes : nat; vote_type : VoteType };
 type ReceiptInfo = record {
-  votes : nat64;
+  votes : nat;
   vote_type : VoteType;
   reason : opt text;
 };
@@ -89,7 +89,7 @@ type Task = record {
   arguments : vec nat8;
 };
 type VoteType = variant { Support; Abstain; Against };
-service : (text, nat64, nat64, nat64, nat64, nat64, principal) -> {
+service : (principal, text, nat64, nat64, nat64, nat64, nat64, principal) -> {
   cancel : (nat64) -> (Result);
   castVote : (nat64, VoteType, opt text) -> (Result_1);
   execute : (nat64) -> (Result_2);
