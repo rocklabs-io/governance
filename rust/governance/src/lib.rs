@@ -22,6 +22,7 @@ mod timelock;
 mod governance;
 mod stable;
 mod cap;
+#[cfg(test)]
 mod test;
 
 thread_local! {
