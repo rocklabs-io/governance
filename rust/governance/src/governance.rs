@@ -7,8 +7,9 @@
  */
 
 use std::collections::HashMap;
-use ic_kit::candid::{CandidType, Deserialize};
+use ic_kit::candid::{CandidType, Deserialize, Nat};
 use ic_kit::{Principal};
+use crate::stable::{Memory, Position, StableMemory};
 use crate::timelock::{ONE_DAY, Task, Timelock};
 
 type GovernResult<R> = Result<R, &'static str>;
@@ -30,10 +31,10 @@ pub enum ProposalState {
 pub enum VoteType {
     Support,
     Against,
-    Abstain
+    Abstain,
 }
 
-#[derive(Deserialize, CandidType, Clone, Debug)]
+#[derive(Deserialize, CandidType, Clone)]
 pub struct GovernorBravo {
     pub(crate) admin: Principal,
     pub(crate) pending_admin: Option<Principal>,
@@ -45,7 +46,7 @@ pub struct GovernorBravo {
     /// in order for a quorum to be reached and for a vote to succeed
     quorum_votes: u64,
     /// delay before voting on a proposal may take place, once proposed
-    voting_delay:  u64,
+    voting_delay: u64,
     /// duration of voting on a proposal
     voting_period: u64,
     /// number of votes required in order for a voter to become a proposer
@@ -60,6 +61,7 @@ pub struct GovernorBravo {
 
     pub(crate) gov_token: Principal,
     pub(crate) timelock: Timelock,
+    pub(crate) stable_memory: StableMemory,
 }
 
 #[derive(CandidType)]
@@ -72,7 +74,7 @@ pub struct GovernorBravoInfo {
     /// in order for a quorum to be reached and for a vote to succeed
     quorum_votes: u64,
     /// delay before voting on a proposal may take place, once proposed
-    voting_delay:  u64,
+    voting_delay: u64,
     /// duration of voting on a proposal
     voting_period: u64,
     /// number of votes required in order for a voter to become a proposer
@@ -81,18 +83,20 @@ pub struct GovernorBravoInfo {
     proposals_num: usize,
 
     gov_token: Principal,
+    stable_memory: StableMemory,
 }
 
-#[derive(Deserialize, CandidType, Clone, Debug)]
+#[derive(Deserialize, CandidType, Clone)]
 pub struct Proposal {
     /// id of the proposal
     id: usize,
     /// Creator of the proposal
     pub(crate) proposer: Principal,
     /// Title of this proposal
-    title: String, // may limit its length
+    title: String,
+    // may limit its length
     /// Description of this proposal
-    description: String, // TODO store in stable memory
+    description: Position,
     /// proposal task to action
     pub(crate) task: Task,
     /// The time at which voting begins: holders must delegate their votes prior to this timestamp
@@ -100,11 +104,11 @@ pub struct Proposal {
     /// The time at which voting ends: votes must be cast prior to this timestamp
     end_time: u64,
     /// Current number of votes in favor of this proposal
-    support_votes: u64,
+    support_votes: Nat,
     /// Current number of votes in opposition to this proposal
-    against_votes: u64,
+    against_votes: Nat,
     /// Current number of votes for abstaining for this proposal
-    abstain_votes: u64,
+    abstain_votes: Nat,
     /// Flag marking whether the proposal has been canceled
     canceled: bool,
     /// Flag marking whether the proposal is executing
@@ -112,7 +116,38 @@ pub struct Proposal {
     /// Flag marking whether the proposal has been executed
     executed: bool,
     /// Receipts of ballots for the entire set of voters
-    pub(crate) receipts: HashMap<Principal, Receipt>
+    pub(crate) receipts: HashMap<Principal, Receipt>,
+}
+
+#[derive(Deserialize, CandidType, Clone)]
+pub struct ProposalInfo {
+    /// id of the proposal
+    id: usize,
+    /// Creator of the proposal
+    proposer: Principal,
+    /// Title of this proposal
+    title: String,
+    // may limit its length
+    /// Description of this proposal
+    description: String,
+    /// proposal task to action
+    pub(crate) task: Task,
+    /// The time at which voting begins: holders must delegate their votes prior to this timestamp
+    start_time: u64,
+    /// The time at which voting ends: votes must be cast prior to this timestamp
+    end_time: u64,
+    /// Current number of votes in favor of this proposal
+    pub(crate) support_votes: Nat,
+    /// Current number of votes in opposition to this proposal
+    against_votes: Nat,
+    /// Current number of votes for abstaining for this proposal
+    abstain_votes: Nat,
+    /// Flag marking whether the proposal has been canceled
+    canceled: bool,
+    /// Flag marking whether the proposal is executing
+    executing: bool,
+    /// Flag marking whether the proposal has been executed
+    executed: bool,
 }
 
 #[derive(CandidType)]
@@ -129,11 +164,11 @@ pub struct ProposalDigest {
     /// The time at which voting ends: votes must be cast prior to this timestamp
     end_time: u64,
     /// Current number of votes in favor of this proposal
-    support_votes: u64,
+    support_votes: Nat,
     /// Current number of votes in opposition to this proposal
-    against_votes: u64,
+    against_votes: Nat,
     /// Current number of votes for abstaining for this proposal
-    abstain_votes: u64,
+    abstain_votes: Nat,
     /// Number of voter
     receipt_num: usize,
 }
@@ -143,13 +178,13 @@ impl Proposal {
         id: usize,
         proposer: Principal,
         title: String,
-        description: String,
+        description: Position,
         target: Principal,
         method: String,
         arguments: Vec<u8>,
         cycles: u64,
         start_time: u64,
-        end_time: u64
+        end_time: u64,
     ) -> Self {
         Self {
             id,
@@ -159,13 +194,31 @@ impl Proposal {
             task: Task::new(target, method, arguments, cycles),
             start_time,
             end_time,
-            support_votes: 0,
-            against_votes: 0,
-            abstain_votes: 0,
+            support_votes: Nat::from(0),
+            against_votes: Nat::from(0),
+            abstain_votes: Nat::from(0),
             canceled: false,
             executed: false,
             executing: false,
-            receipts: HashMap::new()
+            receipts: HashMap::new(),
+        }
+    }
+
+    fn to_info(&self, description: String) -> ProposalInfo {
+        ProposalInfo {
+            id: self.id,
+            proposer: self.proposer,
+            title: self.title.clone(),
+            description,
+            task: self.task.clone(),
+            start_time: self.start_time,
+            end_time: self.end_time,
+            support_votes: self.support_votes.to_owned(),
+            against_votes: self.against_votes.to_owned(),
+            abstain_votes: self.abstain_votes.to_owned(),
+            canceled: self.canceled,
+            executing: self.executing,
+            executed: self.executed,
         }
     }
 
@@ -176,29 +229,57 @@ impl Proposal {
             title: self.title.clone(),
             start_time: self.start_time,
             end_time: self.end_time,
-            support_votes: self.support_votes,
-            against_votes: self.against_votes,
-            abstain_votes: self.abstain_votes,
-            receipt_num: self.receipts.len()
+            support_votes: self.support_votes.to_owned(),
+            against_votes: self.against_votes.to_owned(),
+            abstain_votes: self.abstain_votes.to_owned(),
+            receipt_num: self.receipts.len(),
         }
     }
 }
 
-#[derive(Deserialize, CandidType, Clone, Debug)]
+#[derive(Deserialize, CandidType, Clone)]
 pub struct Receipt {
     /// Whether or not the voter supports the proposal or abstains
     vote_type: VoteType,
     /// votes number
-    votes: u64,
+    votes: Nat,
     /// optional: voting reason
-    reason: Option<String> // todo store in stable memory
+    reason: Option<Position>,
+}
+
+#[derive(Deserialize, CandidType, Clone)]
+pub struct ReceiptInfo {
+    vote_type: VoteType,
+    votes: Nat,
+    reason: Option<String>,
+}
+
+#[derive(Deserialize, CandidType, Clone)]
+pub struct ReceiptDigest {
+    vote_type: VoteType,
+    votes: Nat,
 }
 
 impl Receipt {
-    fn new(vote_type: VoteType, votes: u64, reason: Option<String>) -> Self {
+    fn new(vote_type: VoteType, votes: Nat, reason: Option<Position>) -> Self {
         Self {
             vote_type,
             votes,
+            reason,
+        }
+    }
+
+    fn digest(&self) -> ReceiptDigest {
+        ReceiptDigest {
+            votes: self.votes.clone(),
+            vote_type: self.vote_type.clone(),
+        }
+    }
+
+    fn to_info(&self, reason: Option<String>) -> ReceiptInfo {
+        ReceiptInfo {
+            vote_type: self.vote_type.clone(),
+            votes: self.votes.clone(),
             reason
         }
     }
@@ -221,18 +302,20 @@ impl GovernorBravo {
     /// initialize a Governor Bravo
     pub fn initialize(
         &mut self,
+        admin: Principal,
         name: String,
         quorum_votes: u64,
         voting_delay: u64,
         voting_period: u64,
         proposal_threshold: u64,
         timelock_delay: u64,
-        gov_token: Principal
+        gov_token: Principal,
     ) {
         if self.initialized {
             return;
         }
         self.initialized = true;
+        self.admin = admin;
         self.name = name;
         self.quorum_votes = quorum_votes;
         self.voting_period = voting_period;
@@ -246,7 +329,7 @@ impl GovernorBravo {
     pub fn propose(
         &mut self,
         proposer: Principal,
-        proposer_votes: u64,
+        proposer_votes: Nat,
         title: String,
         description: String,
         target: Principal,
@@ -265,23 +348,30 @@ impl GovernorBravo {
             let proposal_state = self.get_state(*lpi, timestamp)?;
             match proposal_state {
                 ProposalState::Pending => {
-                    return Err("one live proposal per proposer, found an already pending proposal")
+                    return Err("one live proposal per proposer, found an already pending proposal");
                 }
                 ProposalState::Active => {
-                    return Err("one live proposal per proposer, found an already active proposal")
+                    return Err("one live proposal per proposer, found an already active proposal");
                 }
                 ProposalState::Executing => {
-                    return Err("one live proposal per proposer, found an executing proposal")
+                    return Err("one live proposal per proposer, found an executing proposal");
                 }
                 _ => {}
             }
         }
 
         let id = self.proposals.len();
+        let buf = description.into_bytes();
+        let offset = self.stable_memory.offset;
+        let len = self.stable_memory.write(buf.as_slice()).map_err(|_| "Stable memory error")?;
+        let pos = Position {
+            offset,
+            len
+        };
         let proposal = Proposal::new(
-            id, proposer, title, description, target, method, arguments, cycles,
+            id, proposer, title, pos, target, method, arguments, cycles,
             timestamp + self.voting_delay,
-            timestamp + self.voting_delay + self.voting_period
+            timestamp + self.voting_delay + self.voting_period,
         );
         self.proposals.push(proposal);
         self.latest_proposal_ids.insert(proposer, id);
@@ -323,17 +413,18 @@ impl GovernorBravo {
         }
 
         let proposal = &mut self.proposals[id];
+        proposal.executing = false;
         proposal.executed = result;
         self.timelock.post_execute_transaction(proposal.task.to_owned(), result);
         Ok(())
     }
 
     /// cancels a proposal only if sender is the proposer, or proposer delegates dropped below proposal threshold
-    pub fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal, proposer_votes: u64) -> GovernResult<()> {
+    pub fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal, proposer_votes: Nat) -> GovernResult<()> {
         let proposal_state = self.get_state(id, timestamp)?;
-        if proposal_state != ProposalState::Executing {
+        if proposal_state == ProposalState::Executing {
             return Err("cannot cancel executing proposal");
-        } else if proposal_state != ProposalState::Executed {
+        } else if proposal_state == ProposalState::Executed {
             return Err("cannot cancel executed proposal");
         }
 
@@ -352,10 +443,10 @@ impl GovernorBravo {
         &mut self,
         id: usize,
         vote_type: VoteType,
-        votes: u64,
+        votes: Nat,
         reason: Option<String>,
         caller: Principal,
-        timestamp: u64
+        timestamp: u64,
     ) -> GovernResult<Receipt> {
         let proposal_state = self.get_state(id, timestamp)?;
         if proposal_state != ProposalState::Active {
@@ -365,24 +456,43 @@ impl GovernorBravo {
         let proposal = &mut self.proposals[id];
         match vote_type {
             VoteType::Support => {
-                proposal.support_votes += votes;
+                proposal.support_votes += votes.clone();
             }
             VoteType::Against => {
-                proposal.against_votes += votes;
+                proposal.against_votes += votes.clone();
             }
             VoteType::Abstain => {
-                proposal.abstain_votes += votes;
+                proposal.abstain_votes += votes.clone();
             }
         }
+
+        let reason = match reason {
+            Some(r) => {
+                let buf = r.into_bytes();
+                let offset = self.stable_memory.offset;
+                let len = self.stable_memory.write(buf.as_slice()).map_err(|_| "Stable memory error")?;
+                Some(Position {
+                    offset,
+                    len
+                })
+            }
+            None => { None }
+        };
         let receipt = Receipt::new(vote_type, votes, reason);
         proposal.receipts.insert(caller, receipt.clone());
 
         Ok(receipt)
     }
 
-    pub fn get_proposal(&self, id: usize) -> GovernResult<&Proposal>  {
+    pub fn get_proposal(&self, id: usize) -> GovernResult<ProposalInfo> {
         match self.proposals.get(id) {
-            Some(p) => { Ok(p) }
+            Some(p) => {
+                let pos = &p.description;
+                let mut buf = vec![0u8; pos.len];
+                self.stable_memory.read(pos.offset, buf.as_mut_slice()).map_err(|_| "Stable memory error")?;
+                let str = String::from_utf8(buf).map_err(|_| "Err utf-8 format")?;
+                Ok(p.to_info(str))
+            }
             None => { Err("invalid proposal id") }
         }
     }
@@ -392,7 +502,7 @@ impl GovernorBravo {
     /// num: number of item in a page
     pub fn get_proposal_pages(&self, page: usize, num: usize, timestamp: u64) -> GovernResult<Vec<(ProposalDigest, ProposalState)>> {
         let proposal_count = self.proposals.len();
-        if proposal_count == 0 {
+        if proposal_count == 0 || page * num >= proposal_count{
             return Ok(vec![]);
         }
         let mut proposals = self.proposals.clone();
@@ -408,11 +518,23 @@ impl GovernorBravo {
         }).collect())
     }
 
-    pub fn get_receipt(&self, id: usize, voter: Principal) -> GovernResult<&Receipt> {
+    pub fn get_receipt(&self, id: usize, voter: Principal) -> GovernResult<ReceiptInfo> {
         match self.proposals.get(id) {
             Some(p) => {
                 match p.receipts.get(&voter) {
-                    Some(r) => { Ok(r) }
+                    Some(r) => {
+
+                        let reason = match &r.reason {
+                            Some(pos) =>  {
+                                let mut buf = vec![0u8; pos.len];
+                                self.stable_memory.read(pos.offset, buf.as_mut_slice()).map_err(|_| "Stable memory error")?;
+                                let str = String::from_utf8(buf).unwrap_or("".to_string());
+                                Some(str)
+                            }
+                            None => { None }
+                        };
+                        Ok(r.to_info(reason))
+                    }
                     None => { Err("receipt not found") }
                 }
             }
@@ -420,8 +542,46 @@ impl GovernorBravo {
         }
     }
 
+    /// get specific number of voting receipt
+    /// page: from which page, start from 0
+    /// num: number of item in a page
+    pub fn get_receipt_pages(&self, id: usize, page: usize, num: usize) -> GovernResult<Vec<(Principal, ReceiptDigest)>> {
+        match self.proposals.get(id) {
+            Some(p) => {
+                let receipts_count = p.receipts.len();
+                if p.receipts.is_empty() || page * num >= receipts_count {
+                    return Ok(vec![]);
+                }
+                let receipts = Vec::from_iter(p.receipts.clone().into_iter());
+                let start = page * num;
+                let end = if start + num > receipts_count {
+                    receipts_count
+                } else {
+                    start + num
+                };
+                Ok(receipts[start..end].iter().map(|(x, y)| {
+                    (x.to_owned(), y.digest())
+                }).collect::<Vec<(Principal, ReceiptDigest)>>())
+            }
+            None => {
+                Err("invalid proposal id")
+            }
+        }
+    }
+
+    pub fn get_task(&self, id: usize) -> GovernResult<Task> {
+        match self.proposals.get(id) {
+            Some(p) => {
+                Ok(p.task.clone())
+            }
+            None => {
+                Err("Invalid proposal id")
+            }
+        }
+    }
+
     pub fn get_state(&self, id: usize, timestamp: u64) -> GovernResult<ProposalState> {
-        if id < self.proposals.len() { return Err("invalid proposal id"); }
+        if id >= self.proposals.len() { return Err("invalid proposal id"); }
         let proposal = &self.proposals[id];
         return Ok(
             if proposal.canceled {
@@ -482,7 +642,8 @@ impl GovernorBravo {
             voting_period: self.voting_period,
             proposal_threshold: self.proposal_threshold,
             proposals_num: self.proposals.len(),
-            gov_token: self.gov_token
+            gov_token: self.gov_token,
+            stable_memory: self.stable_memory.clone(),
         }
     }
 }
@@ -502,7 +663,8 @@ impl Default for GovernorBravo {
             latest_proposal_ids: HashMap::new(),
             initialized: false,
             gov_token: Principal::anonymous(),
-            timelock: Timelock::default()
+            timelock: Timelock::default(),
+            stable_memory: Default::default(),
         }
     }
 }

@@ -44,7 +44,7 @@ impl Task {
 #[derive(Deserialize, CandidType, Clone, Debug)]
 pub struct Timelock {
     pub(crate) delay: u64,
-    queued_transactions: HashSet<Task>,
+    pub(crate) queued_transactions: HashSet<Task>,
 }
 
 pub const ONE_DAY: u64 = 24 * 3600 * 1_000_000_000;
@@ -77,13 +77,13 @@ impl Timelock {
     }
 
     pub(crate) fn pre_execute_transaction(&mut self, task: &Task, timestamp: u64) -> Result<(), &'static str> {
-        if self.queued_transactions.contains(task) {
+        if !self.queued_transactions.contains(task) {
             return Err("Transaction hasn't been queued");
         }
-        if timestamp >= task.eta {
+        if timestamp < task.eta {
             return Err("Transaction hasn't surpassed time lock");
         };
-        if timestamp <= task.eta + Timelock::GRACE_PERIOD {
+        if timestamp > task.eta + Timelock::GRACE_PERIOD {
             return Err("Transaction is stale");
         }
 

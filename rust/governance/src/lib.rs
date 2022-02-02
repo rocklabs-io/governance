@@ -7,17 +7,22 @@
  */
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use cap_sdk::{CapEnv, handshake, IndefiniteEventBuilder, insert};
+use cap_sdk::DetailValue::U64;
 use ic_cdk::api::call::CallResult;
-use ic_kit::candid::{export_service, candid_method};
+use ic_kit::candid::{export_service, candid_method, Nat};
 use ic_kit::{ic, Principal};
 use ic_kit::ic::{stable_restore, stable_store};
 use ic_kit::macros::*;
-use crate::governance::{GovernorBravo, GovernorBravoInfo, Proposal, ProposalDigest, ProposalState, Receipt, VoteType};
+use crate::cap::{AcceptAdminEvent, CancelEvent, ExecuteEvent, GovEvent, ProposeEvent, QueueEvent, SetPendingAdminEvent, VoteEvent};
+use crate::governance::{GovernorBravo, GovernorBravoInfo, ProposalDigest, ProposalInfo, ProposalState, Receipt, ReceiptDigest, ReceiptInfo, VoteType};
 use crate::timelock::{Task};
 
 mod timelock;
 mod governance;
+mod stable;
+mod cap;
+mod test;
 
 thread_local! {
     static BRAVO : RefCell<GovernorBravo> = RefCell::new(GovernorBravo::default());
@@ -36,9 +41,10 @@ fn is_admin() -> Result<(), String> {
     })
 }
 
-#[init(guard = "is_admin")]
+#[init]
 #[candid_method(init)]
 fn initialize(
+    admin: Principal,
     name: String,
     quorum_votes: u64,
     voting_delay: u64,
@@ -46,6 +52,7 @@ fn initialize(
     proposal_threshold: u64,
     timelock_delay: u64,
     gov_token: Principal,
+    cap: Principal,
 ) {
     // assert!(voting_delay >= GovernorBravo::MIN_VOTING_DELAY && voting_delay <= GovernorBravo::MAX_VOTING_DELAY);
     // assert!(voting_period >= GovernorBravo::MIN_VOTING_PERIOD && voting_period <= GovernorBravo::MAX_VOTING_PERIOD);
@@ -53,6 +60,7 @@ fn initialize(
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.initialize(
+            admin,
             name,
             quorum_votes,
             voting_delay,
@@ -61,7 +69,8 @@ fn initialize(
             timelock_delay,
             gov_token,
         );
-    })
+    });
+    handshake(1_000_000_000_000, Some(cap));
 }
 
 #[query(name = "getGovernorBravoInfo")]
@@ -75,7 +84,7 @@ fn get_governor_bravo_info() -> Response<GovernorBravoInfo> {
 
 #[query(name = "getProposal")]
 #[candid_method(query, rename = "getProposal")]
-fn get_proposal(id: usize) -> Response<(Proposal, ProposalState)> {
+fn get_proposal(id: usize) -> Response<(ProposalInfo, ProposalState)> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         let proposal = bravo.get_proposal(id)?;
@@ -109,14 +118,14 @@ fn get_proposals(page: usize, num: usize) -> Response<Vec<(ProposalDigest, Propo
 fn get_task(id: usize) -> Response<Task> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
-        let task = bravo.get_proposal(id)?.task.to_owned();
+        let task = bravo.get_task(id)?;
         Ok(task)
     })
 }
 
 #[query(name = "getReceipt")]
 #[candid_method(query, rename = "getReceipt")]
-fn get_receipt(id: usize, voter: Principal) -> Response<Receipt> {
+fn get_receipt(id: usize, voter: Principal) -> Response<ReceiptInfo> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         let receipt = bravo.get_receipt(id, voter)?.to_owned();
@@ -126,10 +135,10 @@ fn get_receipt(id: usize, voter: Principal) -> Response<Receipt> {
 
 #[query(name = "getReceipts")]
 #[candid_method(query, rename = "getReceipts")]
-fn get_receipts(id: usize) -> Response<HashMap<Principal, Receipt>> {
+fn get_receipts(id: usize, page: usize, num: usize) -> Response<Vec<(Principal, ReceiptDigest)>> {
     BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
-        let receipts = bravo.get_proposal(id)?.receipts.to_owned();
+        let receipts = bravo.get_receipt_pages(id, page, num)?;
         Ok(receipts)
     })
 }
@@ -144,12 +153,13 @@ async fn propose(
     arguments: Vec<u8>,
     cycles: u64,
 ) -> Response<usize> {
+    let caller = ic::caller();
     let gov_token = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(u64, )> = ic::call(gov_token, "getCurrentVotes", (ic::caller(), )).await;
-    let proposer_votes : u64 = match result {
+    let result : CallResult<(Nat, )> = ic::call(gov_token, "getCurrentVotes", (caller, )).await;
+    let proposer_votes : Nat = match result {
         Ok(res) => {
             res.0
         }
@@ -157,36 +167,55 @@ async fn propose(
             return Err("Error in getting proposer's vote")
         }
     };
-    BRAVO.with(|bravo| {
+    let id = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let id = bravo.propose(
-            ic::caller(),
+        bravo.propose(
+            caller,
             proposer_votes,
-            title,
-            description,
+            title.clone(),
+            description.clone(),
             target,
-            method,
-            arguments,
+            method.clone(),
+            arguments.clone(),
             cycles,
             ic::time(),
-        )?;
-        Ok(id)
-    })
+        )
+    })?;
+    #[cfg(not(test))]
+    insert(ProposeEvent::new(
+        caller,
+        id as u64,
+        title,
+        description,
+        target,
+        method,
+        arguments,
+        cycles
+    )
+        .to_indefinite_event()
+    ).await.map_err(|_| "Cap error")?;
+
+    Ok(id)
 }
 
 #[update(name = "queue")]
 #[candid_method(update, rename = "queue")]
-fn queue(id: usize) -> Response<u64> {
-    BRAVO.with(|bravo| {
+async fn queue(id: usize) -> Response<u64> {
+    let caller = ic::caller();
+    let eta = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let eta = bravo.queue(id, ic::time())?;
-        Ok(eta)
-    })
+        bravo.queue(id, ic::time())
+
+    })?;
+    #[cfg(not(test))]
+    insert(QueueEvent::new(caller, id as u64, eta).to_indefinite_event()).await.map_err(|_| "Cap error")?;
+    Ok(eta)
 }
 
 #[update(name = "cancel")]
 #[candid_method(update, rename = "cancel")]
 async fn cancel(id: usize) -> Response<()> {
+    let caller = ic::caller();
     let proposer = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         match bravo.get_proposal(id) {
@@ -198,8 +227,8 @@ async fn cancel(id: usize) -> Response<()> {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(u64, )> = ic::call(gov_token, "getCurrentVotes", (proposer, )).await;
-    let proposer_votes : u64 = match result {
+    let result : CallResult<(Nat, )> = ic::call(gov_token, "getCurrentVotes", (proposer, )).await;
+    let proposer_votes : Nat = match result {
         Ok(res) => {
             res.0
         }
@@ -209,13 +238,17 @@ async fn cancel(id: usize) -> Response<()> {
     };
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        bravo.cancel(id, ic::time(), ic::caller(), proposer_votes)
-    })
+        bravo.cancel(id, ic::time(), caller, proposer_votes)
+    })?;
+    #[cfg(not(test))]
+    insert(CancelEvent::new(caller, id as u64).to_indefinite_event()).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "execute")]
 #[candid_method(update, rename = "execute")]
 async fn execute(id: usize) -> Response<Vec<u8>> {
+    let caller = ic::caller();
     let timestamp = ic::time();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
@@ -224,8 +257,8 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
 
     let task = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
-        bravo.get_proposal(id).unwrap().task.clone()
-    });
+        bravo.get_task(id)
+    })?;
     let result = ic::call_raw(
         task.target,
         task.method.to_owned(),
@@ -233,7 +266,7 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
         task.cycles,
     ).await;
 
-    BRAVO.with(move |bravo| {
+    let ret = BRAVO.with(move |bravo| {
         let mut bravo = bravo.borrow_mut();
         match result {
             Ok(ret) => {
@@ -245,62 +278,75 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
                 Err("Execute error")
             }
         }
-    })
+    })?;
+    #[cfg(not(test))]
+    insert(ExecuteEvent::new(caller, id as u64, ret.clone()).to_indefinite_event()).await.map_err(|_| "Cap error")?;
+    Ok(ret)
 }
 
 #[update(name = "castVote")]
 #[candid_method(update, rename = "castVote")]
 async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Response<Receipt> {
+    let caller = ic::caller();
     let timestamp = ic::time();
     let gov_token = BRAVO.with(|bravo| {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(u64, )> = ic::call(gov_token, "getPriorVotes", (ic::caller(), timestamp, )).await;
-    let votes : u64 = match result {
+    let result : CallResult<(Nat, )> = ic::call(gov_token, "getPriorVotes", (caller, Nat::from(timestamp), )).await;
+    let votes : Nat = match result {
         Ok(res) => {
             res.0
         }
         Err(_) => {
-            return Err("Error in getting proposer's prior vote")
+            return Err("Error in getting proposer's prior vote");
         }
     };
-    BRAVO.with(|bravo| {
+    let receipt = BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        let receipt = bravo.cast_vote(
+        bravo.cast_vote(
             id,
-            vote_type,
-            votes,
+            vote_type.clone(),
+            votes.clone(),
             reason,
-            ic::caller(),
+            caller,
             timestamp,
-        )?;
-        Ok(receipt)
-    })
+        )
+    })?;
+    #[cfg(not(test))]
+    insert(VoteEvent::new(caller, id as u64, votes, vote_type).to_indefinite_event()).await.map_err(|_| "Cap error")?;
+    Ok(receipt)
 }
 
 #[update(name = "setPendingAdmin", guard = "is_admin")]
 #[candid_method(update, rename = "setPendingAdmin")]
 async fn set_pending_admin(pending_admin: Principal) -> Response<()> {
+    let caller = ic::caller();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_pending_admin(pending_admin);
-        Ok(())
-    })
+    });
+    #[cfg(not(test))]
+    insert(SetPendingAdminEvent::new(caller, pending_admin).to_indefinite_event()).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "acceptAdmin")]
 #[candid_method(update, rename = "setAdmin")]
-fn accept_admin() -> Response<()> {
+async fn accept_admin() -> Response<()> {
+    let caller = ic::caller();
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        if bravo.pending_admin != Some(ic::caller()) {
+        if bravo.pending_admin != Some(caller) {
             Err("Unauthorized")
         } else {
             bravo.accept_admin();
             Ok(())
         }
-    })
+    })?;
+    #[cfg(not(test))]
+    insert(AcceptAdminEvent::new(caller).to_indefinite_event()).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "setQuorumVotes", guard = "is_admin")]
@@ -309,8 +355,16 @@ async fn set_quorum_votes(quorum: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_quorum_votes(quorum);
-        Ok(())
-    })
+    });
+    #[cfg(not(test))]
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setQuorumVotes")
+        .details(vec![("quorumVotes".to_string(), U64(quorum))])
+        .build()
+        .unwrap()
+    ).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "setVotePeriod", guard = "is_admin")]
@@ -325,8 +379,16 @@ async fn set_vote_period(period: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_vote_period(period);
-        Ok(())
-    })
+    });
+    #[cfg(not(test))]
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setVotePeriod")
+        .details(vec![("votePeriod".to_string(), U64(period))])
+        .build()
+        .unwrap()
+    ).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "setVoteDelay", guard = "is_admin")]
@@ -341,8 +403,16 @@ async fn set_vote_delay(delay: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_vote_delay(delay);
-        Ok(())
-    })
+    });
+    #[cfg(not(test))]
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setVoteDelay")
+        .details(vec![("voteDelay".to_string(), U64(delay))])
+        .build()
+        .unwrap()
+    ).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "setProposalThreshold", guard = "is_admin")]
@@ -357,8 +427,16 @@ async fn set_proposal_threshold(threshold: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.set_proposal_threshold(threshold);
-        Ok(())
-    })
+    });
+    #[cfg(not(test))]
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setProposalThreshold")
+        .details(vec![("proposalThreshold".to_string(), U64(threshold))])
+        .build()
+        .unwrap()
+    ).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[update(name = "setTimelockDelay", guard = "is_admin")]
@@ -373,25 +451,34 @@ async fn set_timelock_delay(delay: u64) -> Response<()> {
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
         bravo.timelock.set_delay(delay);
-        Ok(())
-    })
+    });
+    #[cfg(not(test))]
+    insert(IndefiniteEventBuilder::new()
+        .caller(ic::caller())
+        .operation("setTimelockDelay")
+        .details(vec![("timelockDelay".to_string(), U64(delay))])
+        .build()
+        .unwrap()
+    ).await.map_err(|_| "Cap error")?;
+    Ok(())
 }
 
 #[pre_upgrade]
 fn pre_upgrade() {
     BRAVO.with(|b| {
         let bravo = b.borrow();
-        stable_store((bravo.to_owned(), )).unwrap();
+        stable_store((bravo.to_owned(), CapEnv::to_archive(), )).unwrap();
     });
 }
 
 #[post_upgrade]
 fn post_upgrade() {
-    let (bravo, ): (GovernorBravo, ) = stable_restore().unwrap();
+    let (bravo, cap_env, ): (GovernorBravo, CapEnv, ) = stable_restore().unwrap();
     BRAVO.with(|b| {
         let mut b_mut = b.borrow_mut();
         *b_mut = bravo;
     });
+    CapEnv::load_from_archive(cap_env);
 }
 
 // needed to export candid on save
@@ -399,19 +486,4 @@ fn post_upgrade() {
 fn export_candid() -> String {
     export_service!();
     __export_service()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn save_candid() {
-        use std::env;
-        use std::fs::write;
-        use std::path::PathBuf;
-
-        let dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-        write(dir.join("governance.did"), export_candid()).expect("Write failed.");
-    }
 }
