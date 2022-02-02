@@ -131,13 +131,13 @@ pub struct ProposalInfo {
     /// Description of this proposal
     description: String,
     /// proposal task to action
-    task: Task,
+    pub(crate) task: Task,
     /// The time at which voting begins: holders must delegate their votes prior to this timestamp
     start_time: u64,
     /// The time at which voting ends: votes must be cast prior to this timestamp
     end_time: u64,
     /// Current number of votes in favor of this proposal
-    support_votes: Nat,
+    pub(crate) support_votes: Nat,
     /// Current number of votes in opposition to this proposal
     against_votes: Nat,
     /// Current number of votes for abstaining for this proposal
@@ -413,6 +413,7 @@ impl GovernorBravo {
         }
 
         let proposal = &mut self.proposals[id];
+        proposal.executing = false;
         proposal.executed = result;
         self.timelock.post_execute_transaction(proposal.task.to_owned(), result);
         Ok(())
@@ -421,9 +422,9 @@ impl GovernorBravo {
     /// cancels a proposal only if sender is the proposer, or proposer delegates dropped below proposal threshold
     pub fn cancel(&mut self, id: usize, timestamp: u64, caller: Principal, proposer_votes: Nat) -> GovernResult<()> {
         let proposal_state = self.get_state(id, timestamp)?;
-        if proposal_state != ProposalState::Executing {
+        if proposal_state == ProposalState::Executing {
             return Err("cannot cancel executing proposal");
-        } else if proposal_state != ProposalState::Executed {
+        } else if proposal_state == ProposalState::Executed {
             return Err("cannot cancel executed proposal");
         }
 

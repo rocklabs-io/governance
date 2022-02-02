@@ -32,6 +32,7 @@ impl Position {
     }
 }
 
+#[cfg(not(test))]
 impl Memory<StableMemoryError> for StableMemory {
     /// get current pages count
     fn capacity(&self) -> u32 {
@@ -67,5 +68,33 @@ impl Memory<StableMemoryError> for StableMemory {
         stable_write(self.offset as u32, buf);
         self.offset += buf.len();
         Ok(buf.len())
+    }
+}
+
+#[cfg(test)]
+impl Memory<StableMemoryError> for StableMemory {
+    /// get current pages count
+    fn capacity(&self) -> u32 {
+        0
+    }
+
+    /// get current memory size in bytes
+    fn size(&self) -> usize {
+        0
+    }
+
+    /// attempts to grow the memory by adding new pages
+    fn grow(&mut self, pages: u32) -> Result<(), StableMemoryError> {
+        Ok(())
+    }
+
+    /// read bytes from offset to fill the buf, return bytes read
+    fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, StableMemoryError> {
+        Ok(0)
+    }
+
+    /// write bytes to stable memory, return bytes written
+    fn write(&mut self, buf: &[u8]) -> Result<usize, StableMemoryError> {
+        Ok(0)
     }
 }

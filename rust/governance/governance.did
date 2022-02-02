@@ -89,7 +89,17 @@ type Task = record {
   arguments : vec nat8;
 };
 type VoteType = variant { Support; Abstain; Against };
-service : (principal, text, nat64, nat64, nat64, nat64, nat64, principal) -> {
+service : (
+  principal,
+  text,
+  nat64,
+  nat64,
+  nat64,
+  nat64,
+  nat64,
+  principal,
+  principal,
+) -> {
   cancel : (nat64) -> (Result);
   castVote : (nat64, VoteType, opt text) -> (Result_1);
   execute : (nat64) -> (Result_2);

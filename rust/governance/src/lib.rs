@@ -22,6 +22,7 @@ mod timelock;
 mod governance;
 mod stable;
 mod cap;
+mod test;
 
 thread_local! {
     static BRAVO : RefCell<GovernorBravo> = RefCell::new(GovernorBravo::default());
@@ -180,6 +181,7 @@ async fn propose(
             ic::time(),
         )
     })?;
+    #[cfg(not(test))]
     insert(ProposeEvent::new(
         caller,
         id as u64,
@@ -189,7 +191,9 @@ async fn propose(
         method,
         arguments,
         cycles
-    ).to_indefinite_event()).await;
+    )
+        .to_indefinite_event()
+    ).await.map_err(|_| "Cap error")?;
 
     Ok(id)
 }
@@ -203,7 +207,8 @@ async fn queue(id: usize) -> Response<u64> {
         bravo.queue(id, ic::time())
 
     })?;
-    insert(QueueEvent::new(caller, id as u64, eta).to_indefinite_event()).await;
+    #[cfg(not(test))]
+    insert(QueueEvent::new(caller, id as u64, eta).to_indefinite_event()).await.map_err(|_| "Cap error")?;
     Ok(eta)
 }
 
@@ -233,9 +238,10 @@ async fn cancel(id: usize) -> Response<()> {
     };
     BRAVO.with(|bravo| {
         let mut bravo = bravo.borrow_mut();
-        bravo.cancel(id, ic::time(), ic::caller(), proposer_votes)
+        bravo.cancel(id, ic::time(), caller, proposer_votes)
     })?;
-    insert(CancelEvent::new(caller, id as u64).to_indefinite_event()).await;
+    #[cfg(not(test))]
+    insert(CancelEvent::new(caller, id as u64).to_indefinite_event()).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -273,7 +279,8 @@ async fn execute(id: usize) -> Response<Vec<u8>> {
             }
         }
     })?;
-    insert(ExecuteEvent::new(caller, id as u64, ret.clone()).to_indefinite_event()).await;
+    #[cfg(not(test))]
+    insert(ExecuteEvent::new(caller, id as u64, ret.clone()).to_indefinite_event()).await.map_err(|_| "Cap error")?;
     Ok(ret)
 }
 
@@ -306,7 +313,8 @@ async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Re
             timestamp,
         )
     })?;
-    insert(VoteEvent::new(caller, id as u64, votes, vote_type).to_indefinite_event()).await;
+    #[cfg(not(test))]
+    insert(VoteEvent::new(caller, id as u64, votes, vote_type).to_indefinite_event()).await.map_err(|_| "Cap error")?;
     Ok(receipt)
 }
 
@@ -318,7 +326,8 @@ async fn set_pending_admin(pending_admin: Principal) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.set_pending_admin(pending_admin);
     });
-    insert(SetPendingAdminEvent::new(caller, pending_admin).to_indefinite_event()).await;
+    #[cfg(not(test))]
+    insert(SetPendingAdminEvent::new(caller, pending_admin).to_indefinite_event()).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -335,7 +344,8 @@ async fn accept_admin() -> Response<()> {
             Ok(())
         }
     })?;
-    insert(AcceptAdminEvent::new(caller).to_indefinite_event()).await;
+    #[cfg(not(test))]
+    insert(AcceptAdminEvent::new(caller).to_indefinite_event()).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -346,13 +356,14 @@ async fn set_quorum_votes(quorum: u64) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.set_quorum_votes(quorum);
     });
+    #[cfg(not(test))]
     insert(IndefiniteEventBuilder::new()
         .caller(ic::caller())
         .operation("setQuorumVotes")
         .details(vec![("quorumVotes".to_string(), U64(quorum))])
         .build()
         .unwrap()
-    ).await;
+    ).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -369,13 +380,14 @@ async fn set_vote_period(period: u64) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.set_vote_period(period);
     });
+    #[cfg(not(test))]
     insert(IndefiniteEventBuilder::new()
         .caller(ic::caller())
         .operation("setVotePeriod")
         .details(vec![("votePeriod".to_string(), U64(period))])
         .build()
         .unwrap()
-    ).await;
+    ).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -392,13 +404,14 @@ async fn set_vote_delay(delay: u64) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.set_vote_delay(delay);
     });
+    #[cfg(not(test))]
     insert(IndefiniteEventBuilder::new()
         .caller(ic::caller())
         .operation("setVoteDelay")
         .details(vec![("voteDelay".to_string(), U64(delay))])
         .build()
         .unwrap()
-    ).await;
+    ).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -415,13 +428,14 @@ async fn set_proposal_threshold(threshold: u64) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.set_proposal_threshold(threshold);
     });
+    #[cfg(not(test))]
     insert(IndefiniteEventBuilder::new()
         .caller(ic::caller())
         .operation("setProposalThreshold")
         .details(vec![("proposalThreshold".to_string(), U64(threshold))])
         .build()
         .unwrap()
-    ).await;
+    ).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -438,13 +452,14 @@ async fn set_timelock_delay(delay: u64) -> Response<()> {
         let mut bravo = bravo.borrow_mut();
         bravo.timelock.set_delay(delay);
     });
+    #[cfg(not(test))]
     insert(IndefiniteEventBuilder::new()
         .caller(ic::caller())
         .operation("setTimelockDelay")
         .details(vec![("timelockDelay".to_string(), U64(delay))])
         .build()
         .unwrap()
-    ).await;
+    ).await.map_err(|_| "Cap error")?;
     Ok(())
 }
 
@@ -471,19 +486,4 @@ fn post_upgrade() {
 fn export_candid() -> String {
     export_service!();
     __export_service()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn save_candid() {
-        use std::env;
-        use std::fs::write;
-        use std::path::PathBuf;
-
-        let dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-        write(dir.join("governance.did"), export_candid()).expect("Write failed.");
-    }
 }
