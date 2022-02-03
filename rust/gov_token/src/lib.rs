@@ -317,6 +317,7 @@ async fn transfer_from(from: Principal, to: Principal, value: Nat) -> TxReceipt 
     }
     _charge_fee(from, stats.fee_to, stats.fee.clone());
     _transfer(from, to, value.clone());
+    _move_delegates(Some(&from), Some(&to), value.clone(), stat.fee.clone());
     let allowances = ic::get_mut::<Allowances>();
     match allowances.get(&from) {
         Some(inner) => {
