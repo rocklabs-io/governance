@@ -489,7 +489,7 @@ shared(msg) actor class Token(
         let delegatorBalance = _balanceOf(delegator);
 
         delegates.put(delegator, delegatee);
-        _moveDelegates(currentDelegate, ?delegatee, delegatorBalance, fee);
+        _moveDelegates(currentDelegate, ?delegatee, delegatorBalance, 0);
 
         delegatorBalance
     };    
