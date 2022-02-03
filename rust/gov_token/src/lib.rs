@@ -169,12 +169,11 @@ fn _charge_fee(user: Principal, fee_to: Principal, fee: Nat) {
 
 fn _delegate(delegator: Principal, delegatee: Principal) -> Nat {
     let delegates = ic::get_mut::<Delegates>();
-    let stats = ic::get::<StatsData>();
     let current_delegate = ic::get::<Delegates>().get(&delegator);
     let delegator_balance = balance_of(delegator);
 
     delegates.insert(delegator, delegatee);
-    _move_delegates(current_delegate, Some(&delegatee), delegator_balance.clone(), stats.fee.clone());
+    _move_delegates(current_delegate, Some(&delegatee), delegator_balance.clone(), Nat::from(0));
 
     delegator_balance
 }
@@ -287,6 +286,7 @@ async fn transfer(to: Principal, value: Nat) -> TxReceipt {
     }
     _charge_fee(from, stats.fee_to, stats.fee.clone());
     _transfer(from, to, value.clone());
+    _move_delegates(Some(&from), Some(&to), value.clone(), stat.fee.clone());
     stats.history_size += 1;
 
     add_record(
