@@ -1,4 +1,4 @@
-## Governance Framework for Projects on the IC
+## Compound-style Governance Framework on the IC
 
 TODO:
 1. testing: basic functions, upgrades of governance controlled canisters
