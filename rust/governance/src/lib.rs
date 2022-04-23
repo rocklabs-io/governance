@@ -7,6 +7,7 @@
  */
 
 use std::cell::RefCell;
+use ic_cdk::call;
 use cap_sdk::{CapEnv, handshake, IndefiniteEventBuilder, insert};
 use cap_sdk::DetailValue::U64;
 use ic_cdk::api::call::CallResult;
@@ -159,7 +160,8 @@ async fn propose(
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(Nat, )> = ic::call(gov_token, "getCurrentVotes", (caller, )).await;
+    
+    let result : CallResult<(Nat, )> = call(gov_token, "getCurrentVotes", (caller, )).await;
     let proposer_votes : Nat = match result {
         Ok(res) => {
             res.0
@@ -228,7 +230,7 @@ async fn cancel(id: usize) -> Response<()> {
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(Nat, )> = ic::call(gov_token, "getCurrentVotes", (proposer, )).await;
+    let result : CallResult<(Nat, )> = call(gov_token, "getCurrentVotes", (proposer, )).await;
     let proposer_votes : Nat = match result {
         Ok(res) => {
             res.0
@@ -294,7 +296,7 @@ async fn cast_vote(id: usize, vote_type: VoteType, reason: Option<String>) -> Re
         let bravo = bravo.borrow();
         bravo.gov_token
     });
-    let result : CallResult<(Nat, )> = ic::call(gov_token, "getPriorVotes", (caller, Nat::from(timestamp), )).await;
+    let result : CallResult<(Nat, )> = call(gov_token, "getPriorVotes", (caller, Nat::from(timestamp), )).await;
     let votes : Nat = match result {
         Ok(res) => {
             res.0

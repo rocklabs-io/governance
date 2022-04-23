@@ -54,7 +54,7 @@ impl Memory<StableMemoryError> for StableMemory {
     /// read bytes from offset to fill the buf, return bytes read
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<usize, StableMemoryError> {
         if offset + buf.len() > self.offset {
-            return Err(StableMemoryError())
+            return Err(StableMemoryError::OutOfBounds)
         }
         stable_read(offset as u32, buf);
         Ok(buf.len())
