@@ -286,7 +286,7 @@ async fn transfer(to: Principal, value: Nat) -> TxReceipt {
     }
     _charge_fee(from, stats.fee_to, stats.fee.clone());
     _transfer(from, to, value.clone());
-    _move_delegates(Some(&from), Some(&to), value.clone(), stat.fee.clone());
+    _move_delegates(Some(&from), Some(&to), value.clone(), stats.fee.clone());
     stats.history_size += 1;
 
     add_record(
@@ -317,7 +317,7 @@ async fn transfer_from(from: Principal, to: Principal, value: Nat) -> TxReceipt 
     }
     _charge_fee(from, stats.fee_to, stats.fee.clone());
     _transfer(from, to, value.clone());
-    _move_delegates(Some(&from), Some(&to), value.clone(), stat.fee.clone());
+    _move_delegates(Some(&from), Some(&to), value.clone(), stats.fee.clone());
     let allowances = ic::get_mut::<Allowances>();
     match allowances.get(&from) {
         Some(inner) => {
@@ -451,7 +451,7 @@ async fn burn(amount: Nat) -> TxReceipt {
         caller,
         caller,
         amount,
-        Nat::from(0),
+        Nat::from(0i32),
         ic::time(),
         TransactionStatus::Succeeded,
     )
@@ -705,7 +705,7 @@ async fn add_record(
     >::into(
         TxRecord {
             caller: Some(caller),
-            index: Nat::from(0),
+            index: Nat::from(0i32),
             from,
             to,
             amount: Nat::from(amount),
